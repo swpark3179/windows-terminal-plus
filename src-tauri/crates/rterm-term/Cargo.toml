@@ -1,0 +1,8 @@
+[package]
+name = "rterm-term"
+version = "0.4.0"
+edition = "2021"
+
+[dependencies]
+alacritty_terminal = "0.26.0"
+serde = { version = "1.0.229", features = ["derive"] }

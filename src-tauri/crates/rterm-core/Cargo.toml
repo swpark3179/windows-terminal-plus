@@ -1,0 +1,9 @@
+[package]
+name = "rterm-core"
+version = "0.4.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.20"

@@ -1,0 +1,35 @@
+[package]
+name = "rterm"
+version = "0.4.0"
+description = "rterm — 통합 AI 터미널"
+authors = ["rterm"]
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+name = "rterm_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+parking_lot = "0.12.5"
+rterm-core = { version = "0.4.0", path = "crates/rterm-core" }
+rterm-pty = { version = "0.4.0", path = "crates/rterm-pty" }
+rterm-term = { version = "0.4.0", path = "crates/rterm-term" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tauri = { version = "2.11.5", features = [] }
+tauri-plugin-dialog = "2.7.2"
+
+[workspace]
+members = ["crates/rterm-core", "crates/rterm-pty", "crates/rterm-term"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = ["codegen"] }
