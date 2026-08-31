@@ -4,6 +4,7 @@
   "version": "0.4.0",
   "type": "module",
   "description": "Terminal++ — 통합 AI 터미널 · Rust",
+  "packageManager": "pnpm@10.34.5",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
