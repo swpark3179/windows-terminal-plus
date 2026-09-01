@@ -12,6 +12,7 @@ const APP_DIR: &str = "rterm";
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let base = app.path().data_dir()?;

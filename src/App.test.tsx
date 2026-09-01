@@ -38,11 +38,17 @@ vi.mock('@xterm/xterm', () => ({
     rows = 24;
     options: Record<string, unknown> = {};
     unicode = { activeVersion: '6' };
+    buffer = { active: { type: 'normal' } };
     loadAddon() {}
     open() {}
     write() {}
     dispose() {}
     attachCustomKeyEventHandler() {}
+    getSelection() {
+      return '';
+    }
+    clearSelection() {}
+    paste() {}
     onData() {
       return { dispose() {} };
     }
@@ -54,6 +60,7 @@ vi.mock('@xterm/xterm', () => ({
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('@xterm/addon-unicode11', () => ({ Unicode11Addon: class {} }));
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
+vi.mock('@xterm/addon-clipboard', () => ({ ClipboardAddon: class {}, Base64: class {} }));
 
 import { App } from './App';
 import { useStore } from './state/store';

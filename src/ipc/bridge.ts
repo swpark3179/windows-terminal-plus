@@ -3,6 +3,10 @@
  */
 
 import { Channel, invoke } from '@tauri-apps/api/core';
+import {
+  readText as pluginReadText,
+  writeText as pluginWriteText,
+} from '@tauri-apps/plugin-clipboard-manager';
 import type {
   Boot,
   FileEntry,
@@ -106,5 +110,40 @@ export const setPaneContent = (sessionId: string, paneId: string, content: strin
   invoke<void>('pane_set_content', { sessionId, paneId, content });
 export const savePane = (sessionId: string, paneId: string) =>
   invoke<SaveResult>('pane_save', { sessionId, paneId });
+
+// ── 클립보드 ─────────────────────────────────────────────
+//
+// 웹뷰의 `navigator.clipboard` 는 WebView2 에서 권한·사용자 제스처 사정으로 조용히 실패한다.
+// 진짜 Win32 클립보드는 Rust 쪽 플러그인으로만 다루고, 브라우저 API 는 `pnpm dev` 를
+// 그냥 브라우저로 열었을 때와 테스트를 위한 뒷길로만 남긴다.
+
+/**
+ * 시스템 클립보드의 텍스트.
+ *
+ * 클립보드가 비었거나 그림만 들어 있으면 플러그인이 오류를 던진다 — 사용자에게 보일 만한
+ * 사건이 아니므로 빈 문자열로 갈음한다.
+ */
+export async function readClipboardText(): Promise<string> {
+  try {
+    return (await pluginReadText()) ?? '';
+  } catch {
+    try {
+      return (await navigator.clipboard?.readText()) ?? '';
+    } catch {
+      return '';
+    }
+  }
+}
+
+/** 시스템 클립보드에 텍스트를 쓴다. 두 길 모두 막히면 호출부가 알 수 있도록 throw 한다. */
+export async function writeClipboardText(text: string): Promise<void> {
+  try {
+    await pluginWriteText(text);
+  } catch (e) {
+    const fallback = navigator.clipboard?.writeText;
+    if (!fallback) throw e;
+    await fallback.call(navigator.clipboard, text);
+  }
+}
 
 export { Channel };

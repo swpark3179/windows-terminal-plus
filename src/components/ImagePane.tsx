@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { readImage, setPaneImageZoom } from '../ipc/bridge';
+import { readImage, setPaneImageZoom, writeClipboardText } from '../ipc/bridge';
 import { fitScale as computeFit, stepZoom, toHex, toImagePixel } from '../lib/imageView';
 import { useStore } from '../state/store';
 import type { Pane } from '../state/types';
@@ -172,8 +172,10 @@ export function ImagePane({ pane, sessionId }: { pane: Pane; sessionId: string }
     const found = sampleAt(e.clientX, e.clientY);
     if (!found) return;
     setPinned(found);
-    void navigator.clipboard?.writeText(found.hex).catch(() => {});
-    flash(`${found.hex} 복사됨`);
+    void writeClipboardText(found.hex).then(
+      () => flash(`${found.hex} 복사됨`),
+      () => flash('클립보드에 복사할 수 없습니다'),
+    );
   };
 
   // Ctrl+휠 확대는 이 창이 직접 처리한다 (전역 글자 크기 조절과 겹치지 않게).

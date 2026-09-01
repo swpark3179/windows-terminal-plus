@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { terminalClipboard } from '../lib/terminalRegistry';
 import { activeSession, useStore } from '../state/store';
 
 interface Item {
@@ -87,6 +88,25 @@ export function ContextMenu() {
       },
       { key: 'swap', icon: '⇄', label: '이 창부터 위치 교환', run: () => startSwap(ctx.id) },
     );
+
+    if (pane.kind === 'term') {
+      items.push(
+        {
+          key: 'copy',
+          icon: '⧉',
+          label: '복사',
+          shortcut: 'Ctrl+Shift+C',
+          run: () => void terminalClipboard(ctx.id)?.copy(),
+        },
+        {
+          key: 'paste',
+          icon: '⎘',
+          label: '붙여넣기',
+          shortcut: 'Ctrl+Shift+V',
+          run: () => terminalClipboard(ctx.id)?.paste(),
+        },
+      );
+    }
 
     if (pane.kind === 'empty') {
       items.push(

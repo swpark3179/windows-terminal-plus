@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { setPaneContent } from '../ipc/bridge';
+import { setPaneContent, writeClipboardText } from '../ipc/bridge';
 import { EditHistory, caretOffset, setCaretOffset, type EditSnapshot } from '../lib/editorHistory';
 import { useStore } from '../state/store';
 import type { Pane } from '../state/types';
@@ -140,7 +140,7 @@ export function TextPane({ pane, sessionId }: { pane: Pane; sessionId: string })
     // 잘라내기 직전 상태를 남겨야 Ctrl+Z 로 그 줄이 되살아난다.
     recordBefore();
 
-    void navigator.clipboard?.writeText(node.textContent ?? '').catch(() => {});
+    void writeClipboardText(node.textContent ?? '').catch(() => {});
     const next = node.nextSibling;
     (node as ChildNode).remove();
     if (next && next.nodeType === Node.ELEMENT_NODE) {

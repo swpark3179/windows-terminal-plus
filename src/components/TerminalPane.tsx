@@ -1,12 +1,28 @@
 import { useEffect, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { Base64, ClipboardAddon, type ClipboardSelectionType } from '@xterm/addon-clipboard';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 
-import { Channel, detachPty, openPty, resizePty, writePty } from '../ipc/bridge';
-import { appOwnsKey } from '../lib/keys';
+import {
+  Channel,
+  detachPty,
+  openPty,
+  readClipboardText,
+  resizePty,
+  writeClipboardText,
+  writePty,
+} from '../ipc/bridge';
+import {
+  MAX_PASTE_CHARS,
+  describeSize,
+  normalizeCopyText,
+  sanitizePasteText,
+} from '../lib/clipboard';
+import { appOwnsKey, terminalKeyAction } from '../lib/keys';
+import { registerTerminalClipboard, terminalClipboard } from '../lib/terminalRegistry';
 import { useStore } from '../state/store';
 import type { Pane, PtyExitEvent } from '../state/types';
 
@@ -17,6 +33,8 @@ const THEME = {
   cursor: '#d99b74',
   cursorAccent: '#1b1a18',
   selectionBackground: '#413b33',
+  // 우클릭 메뉴가 포커스를 가져가도 선택 영역이 보여야 한다 (xterm 기본값은 회색이라 튄다).
+  selectionInactiveBackground: '#332f29',
   black: '#33312b',
   red: '#e08b73',
   green: '#8fc98a',
@@ -35,6 +53,14 @@ const THEME = {
   brightWhite: '#faf9f5',
 };
 
+/**
+ * OSC 52 의 시스템 클립보드 선택자.
+ *
+ * `ClipboardSelectionType` 은 ambient `const enum` 이라 `isolatedModules` 아래에서는 값으로
+ * 가져올 수 없다. 타입만 빌려 오고 값은 리터럴로 쓴다.
+ */
+const SYSTEM_SELECTION = 'c' as ClipboardSelectionType;
+
 export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -45,6 +71,9 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+
+    let disposed = false;
+    const flash = (msg: string) => useStore.getState().flash(msg);
 
     const term = new Terminal({
       allowProposedApi: true,
@@ -63,6 +92,16 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = '11';
 
+    // OSC 52 — ssh·tmux·vim 안에서 복사한 내용이 윈도우 클립보드까지 오게 한다.
+    term.loadAddon(
+      new ClipboardAddon(new Base64(), {
+        // 원격이 내 클립보드를 **읽는** 것은 막는다. 유출 경로가 된다.
+        readText: () => '',
+        writeText: (selection, data) =>
+          selection === SYSTEM_SELECTION ? writeClipboardText(data).catch(() => {}) : undefined,
+      }),
+    );
+
     term.open(host);
     try {
       term.loadAddon(new WebglAddon());
@@ -74,7 +113,65 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     termRef.current = term;
     fitRef.current = fit;
 
-    term.attachCustomKeyEventHandler((e) => !appOwnsKey(e));
+    const copySelection = async () => {
+      const text = normalizeCopyText(term.getSelection());
+      if (!text) {
+        flash('선택한 내용이 없습니다');
+        return;
+      }
+      try {
+        await writeClipboardText(text);
+        // 선택을 지워야 다음 Ctrl+C 가 다시 실행 중인 명령을 끊는다.
+        term.clearSelection();
+        flash(`${text.length}자 복사됨`);
+      } catch {
+        flash('클립보드에 복사할 수 없습니다');
+      }
+    };
+
+    // 클립보드 읽기는 비동기지만 붙여넣기끼리의 순서는 체인으로 지킨다.
+    let pasteChain: Promise<void> = Promise.resolve();
+    const pasteClipboard = () => {
+      pasteChain = pasteChain.then(async () => {
+        const raw = await readClipboardText();
+        if (disposed || !raw) return;
+        if (raw.length > MAX_PASTE_CHARS) {
+          flash(`클립보드 내용이 너무 큽니다 (${describeSize(raw.length)}) — 붙여넣지 않았습니다`);
+          return;
+        }
+        // 괄호 붙여넣기 모드는 xterm 이 알아서 감싼다 — 셸이 타이핑과 구분할 수 있게.
+        term.paste(sanitizePasteText(raw));
+      });
+    };
+
+    const unregisterClipboard = registerTerminalClipboard(pane.id, {
+      copy: copySelection,
+      paste: pasteClipboard,
+    });
+
+    term.attachCustomKeyEventHandler((e) => {
+      // 한글 조합 중에는 아무것도 가로채지 않는다.
+      if (e.isComposing || e.keyCode === 229) return true;
+
+      const action = terminalKeyAction(e);
+      if (action) {
+        const rawCtrlV = action === 'paste' && !e.shiftKey && e.key.toLowerCase() === 'v';
+        const passThrough =
+          // vim·less·tmux 같은 대체 화면에서는 Ctrl+V 가 그 프로그램의 것이다.
+          (rawCtrlV && term.buffer.active.type === 'alternate') ||
+          // 선택이 없으면 Ctrl+C 는 예전처럼 셸로 가 실행 중인 명령을 끊는다.
+          (action === 'copy-if-selection' && term.getSelection().trim() === '');
+        if (!passThrough) {
+          // xterm 의 ^C/^V 전송과 웹뷰 기본 붙여넣기(중복!)를 함께 막는다.
+          e.preventDefault();
+          e.stopPropagation();
+          if (action === 'paste') pasteClipboard();
+          else void copySelection();
+          return false;
+        }
+      }
+      return !appOwnsKey(e);
+    });
 
     // 키 입력 → PTY. (ConPTY 의 커서 위치 질의도 xterm 이 여기로 답한다.)
     const dataSub = term.onData((d) => void writePty(pane.id, d).catch(() => {}));
@@ -84,9 +181,8 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     const queue: Uint8Array[] = [];
     let frame = 0;
     let restoreDone = false;
-    let disposed = false;
 
-    const flush = () => {
+    const flushQueue = () => {
       frame = 0;
       if (disposed || !restoreDone) return;
       while (queue.length) {
@@ -95,7 +191,7 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     };
     const schedule = () => {
       if (frame || disposed) return;
-      frame = requestAnimationFrame(flush);
+      frame = requestAnimationFrame(flushQueue);
     };
 
     const channel = new Channel<ArrayBuffer>();
@@ -152,6 +248,7 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       observer.disconnect();
       dataSub.dispose();
       binarySub.dispose();
+      unregisterClipboard();
       void exitPromise.then((un) => un());
       // 세션을 옮기는 것뿐일 수 있으므로 셸은 죽이지 않고 채널만 뗀다.
       void detachPty(pane.id).catch(() => {});
@@ -183,7 +280,15 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       ref={hostRef}
       onMouseDown={(e) => {
         // 편집 모드의 드래그를 방해하지 않도록 선택 조작만 흘려보낸다.
-        if (useStore.getState().editMode) e.preventDefault();
+        if (useStore.getState().editMode) {
+          e.preventDefault();
+          return;
+        }
+        // 가운데 버튼 = 붙여넣기. 마우스를 쓰는 앱(vim·tmux)이 이미 가져갔으면 넘긴다.
+        if (e.button === 1 && !e.defaultPrevented) {
+          e.preventDefault();
+          terminalClipboard(pane.id)?.paste();
+        }
       }}
     />
   );
