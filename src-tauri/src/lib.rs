@@ -1,6 +1,8 @@
 //! rterm — Tauri 2 앱 진입점.
 
+mod aiscan;
 mod commands;
+mod shellinit;
 mod state;
 
 use tauri::{Manager, RunEvent};
@@ -12,6 +14,7 @@ const APP_DIR: &str = "rterm";
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let base = app.path().data_dir()?;
@@ -21,6 +24,12 @@ pub fn run() {
                 .home_dir()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| ".".to_string());
+
+            // 셸 통합 스크립트는 창을 열기 전에 준비돼 있어야 한다.
+            // 실패해도 앱은 떠야 한다 — 폴더 복원만 조용히 꺼진다.
+            if let Err(e) = shellinit::ensure_scripts(&config_dir) {
+                eprintln!("[rterm] 셸 통합 스크립트를 쓸 수 없습니다: {e}");
+            }
 
             app.manage(AppState::new(config_dir, home));
             Ok(())

@@ -5,6 +5,8 @@
  * (마크다운을 열지 않는 세션에서는 아예 로드되지 않는다.)
  */
 
+import { writeClipboardText } from '../ipc/bridge';
+
 /** 자주 쓰는 언어만 등록해 번들을 줄인다. */
 const LANGUAGES: Record<string, () => Promise<{ default: unknown }>> = {
   rust: () => import('highlight.js/lib/languages/rust'),
@@ -195,10 +197,10 @@ export function wireCopyButtons(root: HTMLElement, onCopied: (label: string) => 
     if (!button) return;
     event.preventDefault();
     const text = button.dataset.copy ?? '';
-    void navigator.clipboard
-      ?.writeText(text)
-      .then(() => onCopied('코드 복사됨'))
-      .catch(() => onCopied('복사할 수 없습니다'));
+    void writeClipboardText(text).then(
+      () => onCopied('코드 복사됨'),
+      () => onCopied('복사할 수 없습니다'),
+    );
   };
   root.addEventListener('click', handler);
   return () => root.removeEventListener('click', handler);

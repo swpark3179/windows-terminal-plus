@@ -53,6 +53,37 @@ pub enum MdMode {
     Edit,
 }
 
+/// 터미널 창에서 돌고 있는 AI CLI.
+///
+/// 앱을 끌 때 무엇이 돌고 있었는지 기억해 두었다가, 다시 켜면 같은 폴더에서 이어붙인다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiKind {
+    Claude,
+    Codex,
+}
+
+impl AiKind {
+    /// 저장해 둔 세션 ID 없이 "이 폴더의 가장 최근 대화" 를 잇는 명령.
+    ///
+    /// 두 CLI 모두 현재 작업 폴더를 기준으로 최근 세션을 찾으므로, 창의 폴더만 제대로
+    /// 복원되면 ID 를 손으로 넣을 이유가 없다.
+    pub fn resume_command(self) -> &'static str {
+        match self {
+            AiKind::Claude => "claude --continue",
+            AiKind::Codex => "codex resume --last",
+        }
+    }
+
+    /// 사이드바·헤더 칩이 쓰는 이름.
+    pub fn label(self) -> &'static str {
+        match self {
+            AiKind::Claude => "claude",
+            AiKind::Codex => "codex",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvVar {
     pub k: String,
@@ -145,6 +176,14 @@ pub struct Pane {
     #[serde(default, skip_serializing)]
     pub alive: bool,
 
+    /// 터미널 패널: 셸이 OSC 9;9 로 알려 준 마지막 작업 폴더.
+    /// 다음에 이 창을 열 때의 시작 위치가 된다. 세션 설정의 `cwd` 보다 우선한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// 터미널 패널: 스냅샷을 찍을 때 이 창에서 돌고 있던 AI CLI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai: Option<AiKind>,
+
     /// 파일 패널: 원본 경로.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
@@ -176,6 +215,8 @@ impl Pane {
             zoom: 14,
             scrollback: None,
             alive: false,
+            cwd: None,
+            ai: None,
             path: None,
             content: None,
             mode: None,
@@ -207,12 +248,6 @@ pub struct Session {
     /// `ssh` 셸일 때의 접속 대상. 비어 있으면 스폰하지 않는다.
     #[serde(default)]
     pub ssh_host: String,
-    /// 세션에 저장해 두는 Claude 세션 ID — `claude --resume <id>` 로 확장된다.
-    #[serde(default)]
-    pub claude: String,
-    /// 세션에 저장해 두는 Codex 세션 ID — `codex resume --session <id>` 로 확장된다.
-    #[serde(default)]
-    pub codex: String,
     /// 사이드바 색상 dot 인덱스.
     #[serde(default)]
     pub color: usize,
@@ -232,8 +267,6 @@ impl Session {
             shell: Shell::default(),
             start: String::new(),
             ssh_host: String::new(),
-            claude: String::new(),
-            codex: String::new(),
             color,
             env: Vec::new(),
             grid: Grid::default(),

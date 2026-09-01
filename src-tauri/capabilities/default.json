@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "rterm 기본 권한 — 프레임리스 창 제어와 파일 선택 대화상자",
+  "description": "rterm 기본 권한 — 프레임리스 창 제어 · 파일 선택 대화상자 · 텍스트 클립보드",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -15,6 +15,8 @@
     "core:window:allow-destroy",
     "core:window:allow-start-dragging",
     "core:webview:allow-internal-toggle-devtools",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text"
   ]
 }

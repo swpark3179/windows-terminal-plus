@@ -507,6 +507,12 @@ button {
   background: #f4f1fc;
 }
 
+/* 고른 창에서 지금 돌고 있는 AI. */
+.chip--on {
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
 .edit-toggle {
   display: flex;
   align-items: center;
@@ -1828,26 +1834,6 @@ button {
 }
 
 .field--mono input {
-  font-family: var(--mono);
-}
-
-.field--claude .field__label {
-  color: var(--accent-deep);
-}
-
-.field--claude input {
-  background: var(--accent-bg);
-  border-color: var(--accent-line);
-  font-family: var(--mono);
-}
-
-.field--codex .field__label {
-  color: #6a4fb0;
-}
-
-.field--codex input {
-  background: #f4f1fc;
-  border-color: #d6cbee;
   font-family: var(--mono);
 }
 

@@ -19,6 +19,9 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor};
 
+pub mod osc;
+pub use osc::{OscScanner, ShellEvent};
+
 /// 스냅샷에 남기는 기본 스크롤백 라인 수 — 디자인 문구 "8,192 라인".
 pub const DEFAULT_SCROLLBACK: usize = 8192;
 
@@ -73,7 +76,8 @@ impl EventListener for TitleSink {
                     *g = None;
                 }
             }
-            // PtyWrite / ClipboardLoad 등은 xterm.js 가 처리한다. 여기서 응답하면 중복이 된다.
+            // PtyWrite 는 xterm.js 가, OSC 52(ClipboardStore/Load) 는 웹뷰의 ClipboardAddon 이
+            // 처리한다. 여기서 응답하면 중복이 된다.
             _ => {}
         }
     }
@@ -85,6 +89,9 @@ pub struct TermCore {
     parser: Processor,
     size: TermSize,
     titles: TitleSink,
+    /// 셸 통합 마커 전용 스캐너. alacritty 파서가 버리는 OSC 7 · 9;9 를 여기서 건진다.
+    osc: OscScanner,
+    shell_events: Vec<ShellEvent>,
 }
 
 impl TermCore {
@@ -101,12 +108,22 @@ impl TermCore {
             parser: Processor::new(),
             size,
             titles,
+            osc: OscScanner::new(),
+            shell_events: Vec::new(),
         }
     }
 
     /// PTY 바이트를 그리드에 반영한다.
+    ///
+    /// 같은 바이트를 셸 통합 스캐너에도 흘린다. 시그니처를 그대로 둔 덕에 호출부는 바뀌지 않는다.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.term, bytes);
+        self.shell_events.extend(self.osc.feed(bytes));
+    }
+
+    /// 마지막으로 꺼내 간 뒤 쌓인 셸 통합 마커를 가져간다 (읽으면 비워진다).
+    pub fn take_shell_events(&mut self) -> Vec<ShellEvent> {
+        std::mem::take(&mut self.shell_events)
     }
 
     /// 셸이 OSC 로 설정한 창 제목을 한 번 꺼내 간다 (읽으면 비워진다).
@@ -408,5 +425,40 @@ mod tests {
         t.feed(b"\x1b]0;my title\x07");
         assert_eq!(t.take_title().as_deref(), Some("my title"));
         assert_eq!(t.take_title(), None, "읽고 나면 비워진다");
+    }
+
+    #[test]
+    fn shell_events_are_drained_once() {
+        let mut t = core();
+        t.feed(b"\x1b]9;9;C:\\work\x07prompt> ");
+        assert_eq!(
+            t.take_shell_events(),
+            vec![ShellEvent::Cwd("C:\\work".into())]
+        );
+        assert!(t.take_shell_events().is_empty(), "읽고 나면 비워진다");
+    }
+
+    #[test]
+    fn osc_52_is_ignored_by_the_mirror() {
+        // 클립보드는 웹뷰가 다룬다. 코어는 조용히 넘기고 화면만 그대로 남겨야 한다.
+        let mut t = core();
+        t.feed(b"\x1b]52;c;aGk=\x07hello");
+        assert!(t.take_shell_events().is_empty());
+        assert!(t.plain_lines().iter().any(|l| l.contains("hello")));
+    }
+
+    #[test]
+    fn serialize_scrollback_never_emits_osc() {
+        // 복원 때 스크롤백을 다시 먹이므로, 여기서 OSC 가 새어 나오면 화면에 찍힌 글자가
+        // 가짜 작업 폴더를 만들어 낼 수 있다. 직렬화는 SGR 과 글자만 내보내야 한다.
+        let mut t = core();
+        t.feed(b"\x1b]9;9;C:\\evil\x07");
+        t.feed("사용자가 친 글자 \u{1b}]9;9;C:\\also-evil\u{7}".as_bytes());
+        let dump = t.serialize_scrollback(100);
+        assert!(!dump.contains("]9;9;"), "직렬화에 OSC 가 들어갔다: {dump:?}");
+
+        let mut fresh = core();
+        fresh.feed(dump.as_bytes());
+        assert!(fresh.take_shell_events().is_empty());
     }
 }

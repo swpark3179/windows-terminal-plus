@@ -3,7 +3,12 @@
  */
 
 import { Channel, invoke } from '@tauri-apps/api/core';
+import {
+  readText as pluginReadText,
+  writeText as pluginWriteText,
+} from '@tauri-apps/plugin-clipboard-manager';
 import type {
+  AiKind,
   Boot,
   FileEntry,
   ImageDoc,
@@ -88,9 +93,14 @@ export const writePty = (paneId: string, data: string) => invoke<void>('pty_writ
 export const resizePty = (paneId: string, cols: number, rows: number) =>
   invoke<void>('pty_resize', { paneId, cols, rows });
 
-/** 세션에 저장된 AI 세션 ID 로 resume 명령을 실행한다. */
-export const runAi = (sessionId: string, paneId: string, kind: 'claude' | 'codex') =>
-  invoke<string>('pty_run_ai', { sessionId, paneId, kind });
+/**
+ * 고른 창에서 AI 대화를 이어붙인다.
+ *
+ * 세션 ID 는 넘기지 않는다 — `claude --continue` / `codex resume --last` 가 그 창의
+ * 현재 폴더에서 가장 최근 대화를 알아서 찾는다.
+ */
+export const runAi = (paneId: string, kind: AiKind) =>
+  invoke<string>('pty_run_ai', { paneId, kind });
 
 // ── 파일 ─────────────────────────────────────────────────
 export const listFiles = (cwd: string) => invoke<FileEntry[]>('fs_list', { cwd });
@@ -106,5 +116,40 @@ export const setPaneContent = (sessionId: string, paneId: string, content: strin
   invoke<void>('pane_set_content', { sessionId, paneId, content });
 export const savePane = (sessionId: string, paneId: string) =>
   invoke<SaveResult>('pane_save', { sessionId, paneId });
+
+// ── 클립보드 ─────────────────────────────────────────────
+//
+// 웹뷰의 `navigator.clipboard` 는 WebView2 에서 권한·사용자 제스처 사정으로 조용히 실패한다.
+// 진짜 Win32 클립보드는 Rust 쪽 플러그인으로만 다루고, 브라우저 API 는 `pnpm dev` 를
+// 그냥 브라우저로 열었을 때와 테스트를 위한 뒷길로만 남긴다.
+
+/**
+ * 시스템 클립보드의 텍스트.
+ *
+ * 클립보드가 비었거나 그림만 들어 있으면 플러그인이 오류를 던진다 — 사용자에게 보일 만한
+ * 사건이 아니므로 빈 문자열로 갈음한다.
+ */
+export async function readClipboardText(): Promise<string> {
+  try {
+    return (await pluginReadText()) ?? '';
+  } catch {
+    try {
+      return (await navigator.clipboard?.readText()) ?? '';
+    } catch {
+      return '';
+    }
+  }
+}
+
+/** 시스템 클립보드에 텍스트를 쓴다. 두 길 모두 막히면 호출부가 알 수 있도록 throw 한다. */
+export async function writeClipboardText(text: string): Promise<void> {
+  try {
+    await pluginWriteText(text);
+  } catch (e) {
+    const fallback = navigator.clipboard?.writeText;
+    if (!fallback) throw e;
+    await fallback.call(navigator.clipboard, text);
+  }
+}
 
 export { Channel };

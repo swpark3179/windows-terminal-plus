@@ -66,6 +66,8 @@ pub struct PtyHandle {
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     alive: Arc<Mutex<bool>>,
+    /// 셸 프로세스 id. 이 셸의 자손 중에 AI CLI 가 돌고 있는지 훑을 때 뿌리가 된다.
+    pid: Option<u32>,
 }
 
 impl PtyHandle {
@@ -107,6 +109,8 @@ impl PtyHandle {
             .spawn_command(cmd)
             .with_context(|| format!("셸을 실행할 수 없습니다: {}", spec.program))?;
         let killer = child.clone_killer();
+        // child 는 곧 대기 스레드로 넘어간다. pid 는 그 전에 붙잡아 둬야 한다.
+        let pid = child.process_id();
 
         // slave 를 손에서 놓아야 자식 종료 시 reader 가 EOF 를 본다.
         drop(pair.slave);
@@ -159,6 +163,7 @@ impl PtyHandle {
             writer: Mutex::new(writer),
             killer: Mutex::new(killer),
             alive,
+            pid,
         })
     }
 
@@ -185,6 +190,11 @@ impl PtyHandle {
 
     pub fn is_alive(&self) -> bool {
         *self.alive.lock()
+    }
+
+    /// 셸 프로세스 id. 플랫폼이 알려 주지 않으면 `None`.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
     }
 
     /// 자식 프로세스를 종료한다. 이미 죽었으면 조용히 넘어간다.
@@ -269,6 +279,8 @@ mod tests {
         .size(80, 24);
 
         let pty = PtyHandle::spawn(spec, |_| {}, |_| {}).expect("spawn ok");
+        // 자손을 훑으려면 셸 pid 를 알아야 한다.
+        assert!(pty.pid().is_some(), "셸 pid 를 알 수 있어야 한다");
         pty.resize(120, 40).expect("resize ok");
         pty.write(b"exit\r").expect("write ok");
         pty.kill();
