@@ -255,6 +255,13 @@ pub struct Session {
     pub env: Vec<EnvVar>,
     pub grid: Grid,
     pub panes: Vec<Pane>,
+    /// 지금 이 세션을 혼자 채우고 있는 창. `None` 이면 평소의 격자 배치.
+    ///
+    /// 창 하나만 세션 영역 가득 보여 주는 "전체화면" 상태다. 격자는 그대로 남아 있어서
+    /// 창 모드로 돌아오면 배치가 그대로 살아난다. 뷰 모드지만 사이드바 접힘이나 마크다운
+    /// 뷰어/에디터처럼 스냅샷에 남겨 다음 실행에서도 이어지게 한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_pane_id: Option<String>,
 }
 
 impl Session {
@@ -271,6 +278,7 @@ impl Session {
             env: Vec::new(),
             grid: Grid::default(),
             panes: vec![Pane::empty(1, 1, 1, 1)],
+            full_pane_id: None,
         }
     }
 

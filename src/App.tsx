@@ -43,6 +43,13 @@ export function App() {
       }
       if (store.palette) return;
 
+      // 전체화면은 터미널 안에서도 되돌릴 수 있어야 한다 (Esc 는 셸·vim 의 것이라 쓰지 않는다).
+      if (e.ctrlKey && e.shiftKey && k === 'f') {
+        e.preventDefault();
+        void store.toggleFull();
+        return;
+      }
+
       if (k === 'escape') {
         store.closeOverlays();
         return;

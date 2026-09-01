@@ -97,6 +97,13 @@ interface AppState {
   saveAllDirty: () => Promise<void>;
   openTerminal: (paneId: string) => Promise<void>;
   openFile: (paneId: string, path: string) => Promise<void>;
+  /**
+   * 창 하나만 세션 영역 가득 보이게 / 다시 격자로.
+   * 창을 지정하지 않으면 지금 전체화면인 창, 없으면 고른 창(또는 유일한 창)을 대상으로 한다.
+   */
+  toggleFull: (paneId?: string) => Promise<void>;
+  /** 전체화면이면 창 모드로 되돌린다. 아니면 아무 일도 하지 않는다. */
+  leaveFull: () => void;
   zoomBy: (paneId: string, delta: number) => Promise<void>;
   zoomReset: (paneId: string) => Promise<void>;
   setMdMode: (paneId: string, mode: MdMode) => Promise<void>;
@@ -207,16 +214,20 @@ export const useStore = create<AppState>((set, get) => ({
     void api.setSidebarOpen(sidebarOpen);
   },
 
-  toggleEdit: () =>
-    set((s) => ({
-      editMode: !s.editMode,
+  toggleEdit: () => {
+    const editMode = get().editMode;
+    // 격자를 손보려면 격자가 보여야 한다 — 편집을 켜면 전체화면은 풀린다.
+    if (!editMode) get().leaveFull();
+    set({
+      editMode: !editMode,
       op: null,
       mergeSet: null,
       mergeVerdict: null,
       dragMerge: false,
       resizeDraft: null,
       ctx: null,
-    })),
+    });
+  },
 
   selectPane: (sel) => set({ sel }),
 
@@ -240,7 +251,8 @@ export const useStore = create<AppState>((set, get) => ({
     }, flash);
   },
 
-  startMerge: (paneId) =>
+  startMerge: (paneId) => {
+    get().leaveFull();
     set((s) => ({
       editMode: true,
       op: s.op === 'merge' && !paneId ? null : 'merge',
@@ -249,15 +261,18 @@ export const useStore = create<AppState>((set, get) => ({
       mergeVerdict: null,
       dragMerge: false,
       ctx: null,
-    })),
+    }));
+  },
 
-  startSwap: (paneId) =>
+  startSwap: (paneId) => {
+    get().leaveFull();
     set((s) => ({
       editMode: true,
       op: s.op === 'swap' && !paneId ? null : 'swap',
       sel: paneId ?? s.sel,
       ctx: null,
-    })),
+    }));
+  },
 
   paneMouseDown: (paneId) => {
     const { editMode, op, sel, snapshot, flash, apply } = get();
@@ -407,6 +422,41 @@ export const useStore = create<AppState>((set, get) => ({
     }, flash);
   },
 
+  toggleFull: async (paneId) => {
+    const { snapshot, flash, apply } = get();
+    const session = activeSession(snapshot);
+    if (!session) return;
+
+    const current = session.fullPaneId ?? null;
+    const target = paneId ?? current ?? fullCandidate(session, get().sel);
+    if (!target) {
+      flash('전체화면으로 볼 창을 먼저 선택하세요');
+      return;
+    }
+    const next = current === target ? null : target;
+
+    await guard(async () => {
+      apply(await api.setPaneFull(session.id, next));
+      set({ sel: next ?? target });
+      if (next) {
+        // 전체화면에서는 나눌 경계가 보이지 않으므로 레이아웃 편집은 함께 끈다.
+        set({
+          editMode: false,
+          op: null,
+          mergeSet: null,
+          mergeVerdict: null,
+          dragMerge: false,
+          resizeDraft: null,
+        });
+      }
+      flash(next ? '전체화면 · Ctrl+Shift+F 로 창 모드' : '창 모드 · 격자로 돌아감');
+    }, flash);
+  },
+
+  leaveFull: () => {
+    if (activeSession(get().snapshot)?.fullPaneId) void get().toggleFull();
+  },
+
   zoomBy: async (paneId, delta) => {
     const { snapshot, flash, apply } = get();
     if (!snapshot) return;
@@ -544,6 +594,25 @@ export function activeSession(snapshot: Snapshot | null): Session | null {
 
 export function activePanes(snapshot: Snapshot | null): Pane[] {
   return activeSession(snapshot)?.panes ?? [];
+}
+
+/**
+ * 전체화면으로 보고 있는 창. 대상이 사라졌거나 빈 블럭이면 `null`.
+ *
+ * Rust 도 같은 정리를 하지만(`fix_full_pane`), 화면은 어떤 스냅샷을 받아도
+ * 빈 화면이 되지 않아야 하므로 여기서도 한 번 더 확인한다.
+ */
+export function fullPane(session: Session | null): Pane | null {
+  if (!session?.fullPaneId) return null;
+  return session.panes.find((p) => p.id === session.fullPaneId && p.kind !== 'empty') ?? null;
+}
+
+/** 창을 지정하지 않고 전체화면을 눌렀을 때의 대상 — 고른 창, 없으면 하나뿐인 창. */
+function fullCandidate(session: Session, sel: string | null): string | null {
+  const picked = session.panes.find((p) => p.id === sel && p.kind !== 'empty');
+  if (picked) return picked.id;
+  const open = session.panes.filter((p) => p.kind !== 'empty');
+  return open.length === 1 ? open[0].id : null;
 }
 
 /** 저장되지 않은 변경이 있는 파일 패널 — 세션 구분 없이 전부. */

@@ -49,6 +49,11 @@ pub fn session_duplicate(state: State<'_, AppState>, session_id: String) -> Resu
         copy.id = rterm_core::uid("ses_");
         copy.name = format!("{} 사본", source.name);
         // 창 배치는 그대로 두되 실행 중인 내용은 물려받지 않는다.
+        // 창 id 를 새로 뽑으므로 전체화면 대상은 자리(인덱스)로 따라가게 한다.
+        let full_at = copy
+            .full_pane_id
+            .as_ref()
+            .and_then(|id| copy.panes.iter().position(|p| &p.id == id));
         for pane in &mut copy.panes {
             pane.id = rterm_core::uid("p");
             pane.scrollback = None;
@@ -56,6 +61,7 @@ pub fn session_duplicate(state: State<'_, AppState>, session_id: String) -> Resu
             pane.cwd = None;
             pane.ai = None;
         }
+        copy.full_pane_id = full_at.map(|i| copy.panes[i].id.clone());
         let new_id = copy.id.clone();
         snap.sessions.push(copy);
         snap.active_id = new_id;

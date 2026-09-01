@@ -153,6 +153,13 @@ export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> 
       backend.snapshot = saved;
       return { path: 'C:/work/rterm/notes.txt', bytes: 6, snapshot: saved };
     }
+    case 'pane_set_full': {
+      // Rust 는 세션에 전체화면 대상만 적어 두고 스냅샷을 통째로 돌려준다.
+      const paneId = (args as { paneId?: string | null } | undefined)?.paneId ?? null;
+      const session = { ...backend.snapshot.sessions[0], fullPaneId: paneId };
+      backend.snapshot = { ...backend.snapshot, sessions: [session] };
+      return backend.snapshot;
+    }
     case 'pty_open':
       return { restored: '', banner: '', attached: false };
     case 'pty_run_ai': {

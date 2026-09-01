@@ -66,6 +66,8 @@ export interface Session {
   env: EnvVar[];
   grid: Grid;
   panes: Pane[];
+  /** 혼자 세션 영역을 가득 채우고 있는 창. 없으면 평소의 격자 배치. */
+  fullPaneId?: string | null;
 }
 
 export interface Snapshot {

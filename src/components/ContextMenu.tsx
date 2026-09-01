@@ -27,6 +27,7 @@ export function ContextMenu() {
   const openPicker = useStore((s) => s.openPicker);
   const requestClosePane = useStore((s) => s.requestClosePane);
   const zoomReset = useStore((s) => s.zoomReset);
+  const toggleFull = useStore((s) => s.toggleFull);
   const savePane = useStore((s) => s.savePane);
   const boxRef = useRef<HTMLDivElement>(null);
 
@@ -124,6 +125,13 @@ export function ContextMenu() {
         });
       }
       items.push(
+        {
+          key: 'full',
+          icon: session.fullPaneId === ctx.id ? '⤡' : '⤢',
+          label: session.fullPaneId === ctx.id ? '창 모드로' : '이 창만 전체화면',
+          shortcut: 'Ctrl+Shift+F',
+          run: () => void toggleFull(ctx.id),
+        },
         {
           key: 'reset',
           icon: '⊙',

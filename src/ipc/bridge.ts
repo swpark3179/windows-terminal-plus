@@ -69,6 +69,10 @@ export const openTerminalPane = (sessionId: string, paneId: string) =>
 export const setPaneZoom = (sessionId: string, paneId: string, zoom: number) =>
   invoke<Snapshot>('pane_set_zoom', { sessionId, paneId, zoom });
 
+/** 창 하나만 세션 영역 가득 보여 준다. `null` 이면 창 모드(격자)로 돌아간다. */
+export const setPaneFull = (sessionId: string, paneId: string | null) =>
+  invoke<Snapshot>('pane_set_full', { sessionId, paneId });
+
 export const setPaneMdMode = (sessionId: string, paneId: string, mode: MdMode) =>
   invoke<Snapshot>('pane_set_md_mode', { sessionId, paneId, mode });
 

@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { activeSession, useStore } from '../state/store';
+import { activeSession, fullPane, useStore } from '../state/store';
 import type { Pane, TrackAxis } from '../state/types';
 import { PaneView } from './Pane';
 import { ResizeHandles } from './ResizeHandles';
@@ -35,6 +35,10 @@ export function PaneGrid() {
   const session = activeSession(snapshot);
   if (!session) return null;
 
+  // 전체화면 — 격자는 그대로 두고 창 하나만 세션 영역을 채운다.
+  // 세션 테두리 안에 창 테두리가 한 겹 더 겹치지 않도록 여백과 테두리는 CSS 가 걷어낸다.
+  const full = fullPane(session);
+
   const overlay =
     dragMerge && mergeSet && mergeSet.length >= 2 ? unionRect(session.panes, mergeSet) : null;
   const rejected = mergeVerdict?.status === 'rejected';
@@ -51,14 +55,14 @@ export function PaneGrid() {
   const draftFor = (axis: TrackAxis) =>
     resizeDraft?.axis === axis ? resizeDraft.weights : null;
 
-  // 창 경계 조절은 레이아웃 편집 모드에서만, 병합 드래그 중에는 숨긴다.
-  const showHandles = editMode && !dragMerge;
+  // 창 경계 조절은 레이아웃 편집 모드에서만, 병합 드래그·전체화면 중에는 숨긴다.
+  const showHandles = editMode && !dragMerge && !full;
 
   return (
     <div
       className={`stage${dragMerge ? ' stage--dragging' : ''}${
         resizeDraft ? ' stage--resizing' : ''
-      }`}
+      }${full ? ' stage--full' : ''}`}
       onMouseMove={(e) => {
         if (dragMerge) setDragPos(e.clientX, e.clientY);
       }}
@@ -66,13 +70,23 @@ export function PaneGrid() {
       <div
         className="grid"
         ref={gridRef}
-        style={{
-          gridTemplateColumns: tracks(draftFor('col') ?? session.grid.colWeights, session.grid.cols),
-          gridTemplateRows: tracks(draftFor('row') ?? session.grid.rowWeights, session.grid.rows),
-        }}
+        style={
+          full
+            ? { gridTemplateColumns: '1fr', gridTemplateRows: '1fr' }
+            : {
+                gridTemplateColumns: tracks(
+                  draftFor('col') ?? session.grid.colWeights,
+                  session.grid.cols,
+                ),
+                gridTemplateRows: tracks(
+                  draftFor('row') ?? session.grid.rowWeights,
+                  session.grid.rows,
+                ),
+              }
+        }
       >
-        {session.panes.map((pane) => (
-          <PaneView key={pane.id} pane={pane} session={session} />
+        {(full ? [full] : session.panes).map((pane) => (
+          <PaneView key={pane.id} pane={pane} session={session} full={!!full} />
         ))}
 
         {showHandles && <ResizeHandles session={session} gridRef={gridRef} />}

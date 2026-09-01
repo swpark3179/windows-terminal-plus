@@ -46,6 +46,8 @@ fn layout_scrollback_and_zoom_survive_a_save_load_cycle() {
         // 끄기 전 상태 — 어느 폴더에 있었고 무엇이 돌고 있었는지.
         pane.cwd = Some("C:/work/demo/sub".into());
         pane.ai = Some(AiKind::Claude);
+        // 끄기 전에 이 창만 전체화면으로 보고 있었다.
+        session.full_pane_id = Some(root);
     }
 
     snap.save(&path).expect("save");
@@ -74,6 +76,11 @@ fn layout_scrollback_and_zoom_survive_a_save_load_cycle() {
         "창이 있던 폴더가 그대로 돌아와야 다시 그 자리에서 셸이 뜬다"
     );
     assert_eq!(term.ai, Some(AiKind::Claude), "돌고 있던 AI 도 기억한다");
+    assert_eq!(
+        session.full_pane_id.as_deref(),
+        Some(term.id.as_str()),
+        "전체화면으로 보던 창도 다음 실행에서 그대로 열린다"
+    );
     assert!(!term.alive, "PTY 는 재스폰되므로 alive 는 항상 꺼진 채로 복원된다");
 
     assert!(loaded.saved_at_epoch.is_some());

@@ -277,6 +277,74 @@ describe('분할', () => {
   });
 });
 
+describe('전체화면', () => {
+  /** 터미널 창의 제목줄에 있는 전체화면 토글. */
+  const fullButton = () =>
+    within(paneEl(TERM_PANE)).getByTitle(/전체화면|창 모드로/) as HTMLButtonElement;
+
+  it('전체화면으로 바꾸면 그 창만 세션 영역을 채운다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(fullButton());
+
+    // 빈 블럭은 화면에서 빠지고 터미널만 남는다.
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeNull());
+    expect(backend.lastArgs('pane_set_full')).toMatchObject({
+      sessionId: 'ses_test',
+      paneId: TERM_PANE,
+    });
+    // 테두리가 두 겹으로 보이지 않도록 판 여백과 창 테두리를 걷어내는 표시.
+    expect(document.querySelector('.stage--full')).toBeTruthy();
+    expect(paneEl(TERM_PANE).className).toContain('pane--full');
+    // 격자 자체는 그대로 남아 있어 창 모드로 돌아오면 배치가 살아난다.
+    const grid = useStore.getState().snapshot?.sessions[0].grid;
+    expect([grid?.cols, grid?.rows]).toEqual([2, 1]);
+  });
+
+  it('Ctrl+Shift+F 로 창 모드로 돌아온다 — 터미널을 가득 채운 뒤에도', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(fullButton());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeNull());
+
+    fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true });
+
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeTruthy());
+    expect(backend.lastArgs('pane_set_full')).toMatchObject({ paneId: null });
+    expect(document.querySelector('.stage--full')).toBeNull();
+  });
+
+  it('세션 헤더 버튼도 같은 토글이다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    // 창이 하나뿐이면 고르지 않아도 그 창이 대상이 된다.
+    fireEvent.click(screen.getByText('⤢ 전체화면'));
+
+    await waitFor(() => expect(screen.getByText('⤡ 창 모드')).toBeInTheDocument());
+    expect(backend.lastArgs('pane_set_full')).toMatchObject({ paneId: TERM_PANE });
+
+    fireEvent.click(screen.getByText('⤡ 창 모드'));
+    await waitFor(() => expect(screen.getByText('⤢ 전체화면')).toBeInTheDocument());
+  });
+
+  it('레이아웃 편집을 켜면 격자가 보이도록 창 모드로 돌아간다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(fullButton());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeNull());
+
+    fireEvent.click(screen.getByText('⊞ 레이아웃 편집'));
+
+    await waitFor(() => expect(backend.lastArgs('pane_set_full')).toMatchObject({ paneId: null }));
+    expect(paneEl(EMPTY_PANE)).toBeTruthy();
+    expect(useStore.getState().editMode).toBe(true);
+  });
+});
+
 describe('저장하지 않은 변경', () => {
   /** 두 번째 칸이 편집 중인 notes.txt 인 상태로 띄운다. */
   async function renderWithDirtyFile() {

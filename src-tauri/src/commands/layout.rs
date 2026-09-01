@@ -180,7 +180,23 @@ pub fn pane_open_terminal(
         // 새로 여는 창이 남의 폴더에서 뜨거나 AI 를 자동 실행하면 안 된다.
         pane.cwd = None;
         pane.ai = None;
+        // 터미널은 빈 블럭에만 열리므로 전체화면인 창일 수 없다 — 가려지지 않게 창 모드로.
+        s.full_pane_id = None;
         Ok(())
+    })
+}
+
+/// 창 하나만 세션 영역 가득 보여 준다 (전체화면). `pane_id` 가 `None` 이면 창 모드로 돌아간다.
+///
+/// 격자는 그대로 남으므로 창 모드로 돌아오면 나눠 두었던 배치가 그대로 살아난다.
+#[tauri::command]
+pub fn pane_set_full(
+    state: State<'_, AppState>,
+    session_id: String,
+    pane_id: Option<String>,
+) -> Result<Snapshot, String> {
+    mutate(&state, &session_id, |s| {
+        layout::set_full(s, pane_id.as_deref()).map_err(|e| e.to_string())
     })
 }
 
