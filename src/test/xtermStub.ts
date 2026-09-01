@@ -21,6 +21,8 @@ export class StubTerminal {
   cleared = 0;
   /** `paste()` 로 들어온 글자들. */
   pasted: string[] = [];
+  /** `scrollToBottom()` 이 불린 횟수. */
+  scrolledToBottom = 0;
   keyHandler: ((e: KeyboardEvent) => boolean) | null = null;
 
   constructor() {
@@ -47,6 +49,10 @@ export class StubTerminal {
 
   paste(data: string) {
     this.pasted.push(data);
+  }
+
+  scrollToBottom() {
+    this.scrolledToBottom += 1;
   }
 
   onData() {

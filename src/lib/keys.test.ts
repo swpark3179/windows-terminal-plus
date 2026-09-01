@@ -32,6 +32,20 @@ describe('terminalKeyAction', () => {
     expect(terminalKeyAction(key({ key: 'c', ctrlKey: true, shiftKey: true, altKey: true }))).toBeNull();
   });
 
+  it('Shift+Enter 와 Ctrl+Enter 는 줄바꿈이다', () => {
+    expect(terminalKeyAction(key({ key: 'Enter', shiftKey: true }))).toBe('newline');
+    expect(terminalKeyAction(key({ key: 'Enter', ctrlKey: true }))).toBe('newline');
+    expect(terminalKeyAction(key({ key: 'Enter', ctrlKey: true, shiftKey: true }))).toBe('newline');
+  });
+
+  it('Alt 가 섞인 Enter 는 건드리지 않는다 — AltGr 방어와 같은 이유', () => {
+    expect(terminalKeyAction(key({ key: 'Enter', shiftKey: true, altKey: true }))).toBeNull();
+  });
+
+  it('그냥 Enter 는 셸의 것이다', () => {
+    expect(terminalKeyAction(key({ key: 'Enter' }))).toBeNull();
+  });
+
   it('그 밖의 조합은 건드리지 않는다', () => {
     expect(terminalKeyAction(key({ key: 'c' }))).toBeNull();
     expect(terminalKeyAction(key({ key: 'x', ctrlKey: true }))).toBeNull();

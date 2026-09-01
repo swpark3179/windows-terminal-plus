@@ -1,12 +1,8 @@
 /**
- * AI 이어붙이기 칩 — 저장된 세션 ID 없이도 눌린다.
- *
- * 예전에는 설정 화면에 손으로 넣은 ID 가 있을 때만 칩이 떴다. 이제 창의 폴더가 복원되고
- * `claude --continue` / `codex resume --last` 가 그 폴더의 최근 대화를 알아서 찾으므로
- * ID 자체가 없어졌다. 그 전제가 UI 에서 깨지지 않는지 확인한다.
+ * 세션 헤더 — 평소엔 이름 · cwd 를 보여 주고, 전체화면일 때는 아예 그리지 않는다.
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', async () => {
@@ -21,7 +17,7 @@ vi.mock('@tauri-apps/api/core', async () => {
 
 import { SessionHeader } from './SessionHeader';
 import { useStore } from '../state/store';
-import { TERM_PANE, backend, makeSnapshot, resetBackend } from '../test/backend';
+import { TERM_PANE, makeSnapshot, resetBackend } from '../test/backend';
 
 beforeEach(() => {
   resetBackend();
@@ -30,40 +26,19 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe('AI 칩', () => {
-  it('저장된 세션 ID 가 없어도 두 칩이 모두 보인다', () => {
+describe('세션 헤더', () => {
+  it('평소에는 세션 이름 · cwd 를 보여 준다', () => {
     render(<SessionHeader />);
-    expect(screen.getByRole('button', { name: 'claude' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'codex' })).toBeInTheDocument();
+    expect(screen.getByText('rterm · main')).toBeInTheDocument();
+    expect(screen.getByText('C:/work/rterm')).toBeInTheDocument();
   });
 
-  it('누르면 고른 창 id 와 종류만 넘긴다 — 세션 ID 는 없다', async () => {
-    render(<SessionHeader />);
-    fireEvent.click(screen.getByRole('button', { name: 'claude' }));
-
-    await waitFor(() => expect(backend.calls).toContain('pty_run_ai'));
-    expect(backend.lastArgs('pty_run_ai')).toEqual({ paneId: TERM_PANE, kind: 'claude' });
-  });
-
-  it('실행 중인 터미널이 없으면 토스트로 알리고 부르지 않는다', async () => {
+  it('전체화면일 때는 아무것도 그리지 않는다 — 고른 창이 이 바까지 감싼다', () => {
     const snap = makeSnapshot();
-    snap.sessions[0].panes[0].alive = false;
-    useStore.setState({ snapshot: snap, sel: null });
-
-    render(<SessionHeader />);
-    fireEvent.click(screen.getByRole('button', { name: 'codex' }));
-
-    await waitFor(() => expect(useStore.getState().toast).toBeTruthy());
-    expect(backend.calls).not.toContain('pty_run_ai');
-  });
-
-  it('그 창에서 돌고 있는 AI 는 칩에 표시된다', () => {
-    const snap = makeSnapshot();
-    snap.sessions[0].panes[0].ai = 'claude';
+    snap.sessions[0].fullPaneId = TERM_PANE;
     useStore.setState({ snapshot: snap, sel: TERM_PANE });
 
-    render(<SessionHeader />);
-    expect(screen.getByRole('button', { name: 'claude' }).className).toContain('chip--on');
-    expect(screen.getByRole('button', { name: 'codex' }).className).not.toContain('chip--on');
+    const { container } = render(<SessionHeader />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

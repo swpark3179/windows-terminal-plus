@@ -1,55 +1,20 @@
-import { runAi } from '../ipc/bridge';
 import { activeSession, fullPane, useStore } from '../state/store';
-import type { AiKind } from '../state/types';
-
-/** 칩에 붙는 설명 — 무슨 명령이 실제로 실행되는지 그대로 보여 준다. */
-const AI_HINT: Record<AiKind, string> = {
-  claude: 'Claude 이어붙이기 · claude --continue',
-  codex: 'Codex 이어붙이기 · codex resume --last',
-};
 
 /**
- * 세션 이름 · 작업 디렉터리 · AI 칩 · 레이아웃 편집 토글.
- *
- * AI 칩은 고른 창에서 `claude --continue` / `codex resume --last` 를 실행한다.
- * 세션 ID 를 손으로 넣을 필요가 없다 — 두 명령 모두 **그 창의 현재 폴더** 에서 가장 최근
- * 대화를 찾고, 창의 폴더는 앱이 기억했다가 복원하기 때문이다.
- * (디자인은 터미널 입력을 가로채 붙이는 방식이었지만, 그러면 readline 편집이 망가지므로
- *  명시적인 버튼으로 옮겼다.)
+ * 세션 이름 · 작업 디렉터리 · 전체화면·레이아웃 편집 토글.
  */
 export function SessionHeader() {
   const snapshot = useStore((s) => s.snapshot);
   const editMode = useStore((s) => s.editMode);
   const toggleEdit = useStore((s) => s.toggleEdit);
   const openSettings = useStore((s) => s.openSettings);
-  const sel = useStore((s) => s.sel);
-  const flash = useStore((s) => s.flash);
   const toggleFull = useStore((s) => s.toggleFull);
   const session = activeSession(snapshot);
 
   if (!session) return null;
-
-  const targetPane = () => {
-    const picked = session.panes.find((p) => p.id === sel && p.kind === 'term' && p.alive);
-    return picked ?? session.panes.find((p) => p.kind === 'term' && p.alive);
-  };
-
-  const runResume = (kind: AiKind) => async () => {
-    const target = targetPane();
-    if (!target) {
-      flash('실행 중인 터미널 창이 없습니다');
-      return;
-    }
-    try {
-      const cmd = await runAi(target.id, kind);
-      flash(`${cmd} 실행`);
-    } catch (e) {
-      flash(typeof e === 'string' ? e : '이어붙이기에 실패했습니다');
-    }
-  };
-
-  const running = targetPane()?.ai;
-  const full = fullPane(session);
+  // 전체화면에서는 고른 창이 세션 전체를 감싸야 한다 — 이 바까지 창 하나가 덮는 셈이라 숨긴다.
+  // 빠져나가는 길(⤡)은 그 창의 제목줄에 그대로 남아 있고, Ctrl+Shift+F 도 여전히 듣는다.
+  if (fullPane(session)) return null;
 
   return (
     <div className="session-head">
@@ -58,29 +23,14 @@ export function SessionHeader() {
         {session.cwd}
       </div>
 
-      {(['claude', 'codex'] as const).map((kind) => (
-        <button
-          key={kind}
-          className={`chip chip--${kind}${running === kind ? ' chip--on' : ''}`}
-          title={AI_HINT[kind]}
-          onClick={() => void runResume(kind)()}
-        >
-          {kind}
-        </button>
-      ))}
-
       <div className="spacer" />
 
       <button
-        className={`edit-toggle${full ? ' edit-toggle--on' : ''}`}
+        className="edit-toggle"
         onClick={() => void toggleFull()}
-        title={
-          full
-            ? '창 모드로 돌아가기 · Ctrl+Shift+F'
-            : '고른 창만 이 세션을 가득 채우기 · Ctrl+Shift+F'
-        }
+        title="고른 창만 이 세션을 가득 채우기 · Ctrl+Shift+F"
       >
-        {full ? '⤡ 창 모드' : '⤢ 전체화면'}
+        ⤢ 전체화면
       </button>
       <button
         className={`edit-toggle${editMode ? ' edit-toggle--on' : ''}`}
