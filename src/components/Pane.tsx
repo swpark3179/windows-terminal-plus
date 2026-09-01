@@ -127,8 +127,6 @@ export function PaneView({
               ●
             </div>
           )}
-          {pane.kind === 'term' && !pane.alive && <div className="pane__dead">종료됨</div>}
-
           {pane.kind === 'md' && (
             <div className="md-toggle">
               <button

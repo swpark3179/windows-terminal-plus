@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use rterm_core::{AiKind, Pane, PaneKind, Session, Shell, SCROLLBACK_LINES};
+use rterm_core::{Pane, PaneKind, Session, Shell, SCROLLBACK_LINES};
 use rterm_pty::{PtyHandle, SpawnSpec};
 use rterm_term::TermCore;
 use serde::Serialize;
@@ -402,31 +402,6 @@ pub fn pty_resize(
         .ok_or_else(|| "터미널이 열려 있지 않습니다".to_string())?;
     slot.core.lock().resize(cols as usize, rows as usize);
     slot.pty.resize(cols, rows).map_err(|e| e.to_string())
-}
-
-/// 선택한 창에서 AI 대화를 이어붙인다.
-///
-/// 저장해 둔 세션 ID 는 쓰지 않는다 — `claude --continue` 와 `codex resume --last` 가
-/// **그 창의 현재 폴더** 에서 가장 최근 대화를 알아서 찾기 때문이다. 창의 폴더는 앱이
-/// 기억했다가 복원하므로 손으로 ID 를 넣을 이유가 없다.
-///
-/// (디자인은 터미널 입력을 가로채 ID 를 붙이는 방식이었지만 그러면 readline 편집이
-///  망가져, 명령을 그대로 흘려보내는 방식으로 옮겼다.)
-#[tauri::command]
-pub fn pty_run_ai(
-    state: State<'_, AppState>,
-    pane_id: String,
-    kind: AiKind,
-) -> Result<String, String> {
-    let command = kind.resume_command();
-    let terms = state.terminals.lock();
-    let slot = terms
-        .get(&pane_id)
-        .ok_or_else(|| "터미널 창을 먼저 선택하세요".to_string())?;
-    slot.pty
-        .write(format!("{command}\r").as_bytes())
-        .map_err(|e| e.to_string())?;
-    Ok(command.to_string())
 }
 
 #[cfg(test)]

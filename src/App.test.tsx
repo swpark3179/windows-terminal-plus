@@ -316,28 +316,31 @@ describe('전체화면', () => {
     expect(document.querySelector('.stage--full')).toBeNull();
   });
 
-  it('세션 헤더 버튼도 같은 토글이다', async () => {
+  it('세션 헤더 버튼도 같은 토글이다 — 전체화면이 되면 그 바까지 창이 덮는다', async () => {
     render(<App />);
     await waitForBoot();
 
     // 창이 하나뿐이면 고르지 않아도 그 창이 대상이 된다.
     fireEvent.click(screen.getByText('⤢ 전체화면'));
 
-    await waitFor(() => expect(screen.getByText('⤡ 창 모드')).toBeInTheDocument());
+    // 세션 헤더 자체가 사라진다 — 고른 창이 이 바까지 감싸는 전체화면이라서다.
+    await waitFor(() => expect(document.querySelector('.session-head')).toBeNull());
     expect(backend.lastArgs('pane_set_full')).toMatchObject({ paneId: TERM_PANE });
 
-    fireEvent.click(screen.getByText('⤡ 창 모드'));
+    // 돌아가는 길은 창 제목줄의 토글(⤡)이나 Ctrl+Shift+F 뿐이다.
+    fireEvent.click(fullButton());
     await waitFor(() => expect(screen.getByText('⤢ 전체화면')).toBeInTheDocument());
   });
 
-  it('레이아웃 편집을 켜면 격자가 보이도록 창 모드로 돌아간다', async () => {
+  it('Ctrl+E 로 레이아웃 편집을 켜면 격자가 보이도록 창 모드로 돌아간다', async () => {
     render(<App />);
     await waitForBoot();
 
     fireEvent.click(fullButton());
     await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeNull());
 
-    fireEvent.click(screen.getByText('⊞ 레이아웃 편집'));
+    // 세션 헤더가 숨어 있어도 단축키는 그대로 듣는다.
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true });
 
     await waitFor(() => expect(backend.lastArgs('pane_set_full')).toMatchObject({ paneId: null }));
     expect(paneEl(EMPTY_PANE)).toBeTruthy();

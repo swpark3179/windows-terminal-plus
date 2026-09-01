@@ -100,6 +100,8 @@ describe('복사', () => {
 
     expect(press({ key: 'c', ctrlKey: true })).toBe(false);
     await waitFor(() => expect(writeMock).toHaveBeenCalledWith('pnpm test'));
+    // 복사는 지금 읽던 자리를 지켜야 한다 — 바닥으로 튕기면 방금 고른 걸 다시 봐야 한다.
+    expect(term.scrolledToBottom).toBe(0);
   });
 
   it('선택이 없으면 Ctrl+C 는 셸로 간다 — SIGINT 가 살아 있어야 한다', () => {
@@ -123,6 +125,14 @@ describe('붙여넣기', () => {
 
     expect(press({ key: 'v', ctrlKey: true })).toBe(false);
     await waitFor(() => expect(term.pasted).toEqual(['echo one\recho two\r']));
+  });
+
+  it('스크롤을 올려 둔 채 붙여넣어도 바닥으로 돌아온다 — claude·codex 의 입력창이 화면 밖에 있으면 안 된다', () => {
+    readMock.mockResolvedValue('hi');
+    const { term, press } = mount();
+
+    press({ key: 'v', ctrlKey: true });
+    expect(term.scrolledToBottom).toBe(1);
   });
 
   it('같은 키의 keyup 으로는 다시 붙지 않는다', async () => {
@@ -162,6 +172,7 @@ describe('붙여넣기', () => {
     const { view, term } = mount();
 
     fireEvent.mouseDown(view.container.querySelector('.term-body')!, { button: 1 });
+    expect(term.scrolledToBottom).toBe(1);
     await waitFor(() => expect(term.pasted).toEqual(['middle']));
   });
 });
@@ -175,6 +186,12 @@ describe('줄바꿈', () => {
 
     expect(press({ key: 'Enter', ctrlKey: true })).toBe(false);
     await waitFor(() => expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: '\n' }));
+  });
+
+  it('스크롤을 올려 둔 채 눌러도 바닥으로 돌아온다 — 넣은 줄이 화면 밖에 있으면 안 된다', () => {
+    const { term, press } = mount();
+    expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+    expect(term.scrolledToBottom).toBe(1);
   });
 
   it('그냥 Enter 는 건드리지 않는다 — 평소처럼 셸로 간다', () => {

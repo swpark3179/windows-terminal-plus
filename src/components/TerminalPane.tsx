@@ -165,10 +165,18 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
           // xterm 의 ^C/^V 전송과 웹뷰 기본 붙여넣기(중복!)를 함께 막는다.
           e.preventDefault();
           e.stopPropagation();
-          if (action === 'paste') pasteClipboard();
-          // 순수 LF — 이미 아무 데서나 그냥 통과하는 Ctrl+J 와 같은 바이트라 vim 등에서도 무해하다.
-          else if (action === 'newline') void writePty(pane.id, '\n').catch(() => {});
-          else void copySelection();
+          if (action === 'paste') {
+            // xterm 은 이 처리기가 false 를 돌려주면 자기 scrollOnUserInput 을 건너뛴다 —
+            // 스크롤을 올려 둔 채 claude·codex 에 붙여넣으면 방금 넣은 게 화면 밖에 남는다.
+            term.scrollToBottom();
+            pasteClipboard();
+          } else if (action === 'newline') {
+            // 순수 LF — 이미 아무 데서나 그냥 통과하는 Ctrl+J 와 같은 바이트라 vim 등에서도 무해하다.
+            term.scrollToBottom();
+            void writePty(pane.id, '\n').catch(() => {});
+          } else {
+            void copySelection();
+          }
           return false;
         }
       }
@@ -289,6 +297,7 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
         // 가운데 버튼 = 붙여넣기. 마우스를 쓰는 앱(vim·tmux)이 이미 가져갔으면 넘긴다.
         if (e.button === 1 && !e.defaultPrevented) {
           e.preventDefault();
+          termRef.current?.scrollToBottom();
           terminalClipboard(pane.id)?.paste();
         }
       }}
