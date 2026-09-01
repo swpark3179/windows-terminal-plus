@@ -8,9 +8,9 @@ pub mod model;
 pub mod snapshot;
 
 pub use layout::{
-    close_pane, ensure_non_empty, merge, merge_check, normalize, place_pane, reset_weights,
-    set_weights, split, swap, LayoutError, MergeAxis, MergePlan, MergeReject, MergeVerdict,
-    SplitDir, TrackAxis, MAX_COLS, MAX_ROWS,
+    close_pane, ensure_non_empty, fix_full_pane, merge, merge_check, normalize, place_pane,
+    reset_weights, set_full, set_weights, split, swap, LayoutError, MergeAxis, MergePlan,
+    MergeReject, MergeVerdict, SplitDir, TrackAxis, MAX_COLS, MAX_ROWS,
 };
 pub use model::{
     uid, AiKind, EnvVar, Grid, MdMode, Pane, PaneKind, Session, Shell, MIN_TRACK_WEIGHT,

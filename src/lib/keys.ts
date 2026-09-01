@@ -5,6 +5,8 @@
  * 그래야 셸의 readline 편집(Ctrl+B/E/A/K …)이 살아 있다.
  * 디자인이 안내하는 Ctrl+B / Ctrl+E 는 터미널 밖에서 동작하고,
  * 터미널 안에서도 쓰고 싶을 때를 위해 Shift 를 더한 조합을 함께 받는다.
+ * 전체화면 토글(Ctrl+Shift+F)은 터미널을 가득 채운 상태에서 되돌릴 길이 필요하므로
+ * 반드시 앱이 가져간다. Shift 없는 Ctrl+F 는 readline 의 커서 이동이라 건드리지 않는다.
  *
  * 복사·붙여넣기 조합은 **여기 넣지 않는다.** 선택 영역이 있는지 알아야 판정이 갈리므로
  * 터미널 안(`terminalKeyAction`)에서 풀고, 전역 처리기는 지금처럼 모르는 채로 둔다.
@@ -12,7 +14,7 @@
 export function appOwnsKey(e: KeyboardEvent): boolean {
   if (!e.ctrlKey) return false;
   const k = e.key.toLowerCase();
-  if (e.shiftKey) return k === 'p' || k === 'b' || k === 'e';
+  if (e.shiftKey) return k === 'p' || k === 'b' || k === 'e' || k === 'f';
   return k === ',' || k === 's' || k === '+' || k === '=' || k === '-' || k === '0';
 }
 

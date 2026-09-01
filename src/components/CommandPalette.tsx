@@ -31,6 +31,12 @@ export function CommandPalette() {
       { icon: '⇄', label: '위치 교환 시작', run: () => store.startSwap() },
       { icon: '⊟', label: '창 크기 균등하게', run: () => void store.resetTrackWeights() },
       {
+        icon: session.fullPaneId ? '⤡' : '⤢',
+        label: session.fullPaneId ? '창 모드로 돌아가기' : '고른 창 전체화면',
+        shortcut: 'Ctrl+Shift+F',
+        run: () => void store.toggleFull(),
+      },
+      {
         icon: '▮',
         label: '빈 블럭에 터미널 열기',
         run: () => (firstEmpty ? void store.openTerminal(firstEmpty.id) : noRoom()),

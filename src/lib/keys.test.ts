@@ -54,4 +54,10 @@ describe('appOwnsKey', () => {
     expect(appOwnsKey({ ctrlKey: true, shiftKey: true, key: 'p' } as KeyboardEvent)).toBe(true);
     expect(appOwnsKey({ ctrlKey: true, shiftKey: false, key: 's' } as KeyboardEvent)).toBe(true);
   });
+
+  it('전체화면 토글은 터미널 안에서도 앱이 가져간다 — 되돌릴 길이 있어야 한다', () => {
+    expect(appOwnsKey({ ctrlKey: true, shiftKey: true, key: 'F' } as KeyboardEvent)).toBe(true);
+    // Shift 없는 Ctrl+F 는 readline 의 커서 이동이라 셸의 것이다.
+    expect(appOwnsKey({ ctrlKey: true, shiftKey: false, key: 'f' } as KeyboardEvent)).toBe(false);
+  });
 });

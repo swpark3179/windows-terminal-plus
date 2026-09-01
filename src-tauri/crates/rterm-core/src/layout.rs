@@ -57,6 +57,8 @@ pub enum LayoutError {
     CannotSplitTopBottom,
     #[error("트랙 개수와 몫의 개수가 맞지 않습니다")]
     WeightCountMismatch,
+    #[error("빈 블럭은 전체화면으로 볼 수 없습니다")]
+    CannotFullEmpty,
 }
 
 /// 병합 거부 사유. 사용자에게 보이는 토스트 문구를 그대로 들고 있다.
@@ -180,6 +182,8 @@ pub fn split(s: &mut Session, pane_id: &str, dir: SplitDir) -> Result<String, La
             let new_id = new_pane.id.clone();
             s.pane_mut(pane_id).expect("checked above").cs = half;
             s.panes.push(new_pane);
+            // 새로 생긴 빈 블럭은 보여야 의미가 있다 — 전체화면이었다면 창 모드로.
+            s.full_pane_id = None;
             Ok(new_id)
         }
         SplitDir::TopBottom => {
@@ -196,6 +200,7 @@ pub fn split(s: &mut Session, pane_id: &str, dir: SplitDir) -> Result<String, La
             let new_id = new_pane.id.clone();
             s.pane_mut(pane_id).expect("checked above").rs = half;
             s.panes.push(new_pane);
+            s.full_pane_id = None;
             Ok(new_id)
         }
     }
@@ -384,6 +389,23 @@ pub fn close_pane(s: &mut Session, pane_id: &str) -> Result<String, LayoutError>
     Ok(new_id)
 }
 
+/// 창 하나만 세션 영역 가득 보여 준다. `None` 이면 평소의 격자 배치로 돌아간다.
+///
+/// 격자는 손대지 않는다 — 전체화면은 배치가 아니라 보는 방식이라서, 창 모드로 돌아오면
+/// 나눠 두었던 배치가 그대로 살아난다.
+pub fn set_full(s: &mut Session, pane_id: Option<&str>) -> Result<(), LayoutError> {
+    let Some(id) = pane_id else {
+        s.full_pane_id = None;
+        return Ok(());
+    };
+    let pane = s.pane(id).ok_or(LayoutError::PaneNotFound)?;
+    if !pane.kind.is_occupied() {
+        return Err(LayoutError::CannotFullEmpty);
+    }
+    s.full_pane_id = Some(id.to_string());
+    Ok(())
+}
+
 /// 새 내용을 대상 빈 블럭 자리에 끼워 넣는다 (디자인의 addPane).
 /// 대상이 없으면 첫 빈 블럭, 그마저 없으면 None — 호출부가 토스트를 띄운다.
 pub fn place_pane(s: &mut Session, mut pane: Pane, target_id: Option<&str>) -> Option<String> {
@@ -398,6 +420,8 @@ pub fn place_pane(s: &mut Session, mut pane: Pane, target_id: Option<&str>) -> O
     pane.cs = slot.cs;
     let id = pane.id.clone();
     s.panes[idx] = pane;
+    // 방금 연 내용이 전체화면 뒤에 가려지면 안 된다.
+    s.full_pane_id = None;
     Some(id)
 }
 
@@ -409,4 +433,19 @@ pub fn ensure_non_empty(s: &mut Session) {
     }
     // 옛 스냅샷에는 몫이 없으므로 여기서 채워 넣는다.
     s.grid.fix();
+    fix_full_pane(s);
+}
+
+/// 전체화면으로 보던 창이 사라졌거나 빈 블럭이 됐으면 창 모드로 되돌린다.
+///
+/// 닫기·병합은 창을 새 빈 블럭으로 갈아 끼우므로(=id 가 바뀐다) 여기서 걸린다.
+/// 화면 가득 빈 블럭만 남는 막다른 상태를 이 한 곳에서 막는다.
+pub fn fix_full_pane(s: &mut Session) {
+    let alive = match &s.full_pane_id {
+        Some(id) => s.panes.iter().any(|p| &p.id == id && p.kind.is_occupied()),
+        None => return,
+    };
+    if !alive {
+        s.full_pane_id = None;
+    }
 }

@@ -1,5 +1,5 @@
 import { runAi } from '../ipc/bridge';
-import { activeSession, useStore } from '../state/store';
+import { activeSession, fullPane, useStore } from '../state/store';
 import type { AiKind } from '../state/types';
 
 /** 칩에 붙는 설명 — 무슨 명령이 실제로 실행되는지 그대로 보여 준다. */
@@ -24,6 +24,7 @@ export function SessionHeader() {
   const openSettings = useStore((s) => s.openSettings);
   const sel = useStore((s) => s.sel);
   const flash = useStore((s) => s.flash);
+  const toggleFull = useStore((s) => s.toggleFull);
   const session = activeSession(snapshot);
 
   if (!session) return null;
@@ -48,6 +49,7 @@ export function SessionHeader() {
   };
 
   const running = targetPane()?.ai;
+  const full = fullPane(session);
 
   return (
     <div className="session-head">
@@ -69,6 +71,17 @@ export function SessionHeader() {
 
       <div className="spacer" />
 
+      <button
+        className={`edit-toggle${full ? ' edit-toggle--on' : ''}`}
+        onClick={() => void toggleFull()}
+        title={
+          full
+            ? '창 모드로 돌아가기 · Ctrl+Shift+F'
+            : '고른 창만 이 세션을 가득 채우기 · Ctrl+Shift+F'
+        }
+      >
+        {full ? '⤡ 창 모드' : '⤢ 전체화면'}
+      </button>
       <button
         className={`edit-toggle${editMode ? ' edit-toggle--on' : ''}`}
         onClick={toggleEdit}

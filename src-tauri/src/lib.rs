@@ -53,6 +53,7 @@ pub fn run() {
             commands::layout::pane_close,
             commands::layout::pane_open_terminal,
             commands::layout::pane_set_zoom,
+            commands::layout::pane_set_full,
             commands::layout::pane_set_md_mode,
             commands::pty::pty_open,
             commands::pty::pty_detach,

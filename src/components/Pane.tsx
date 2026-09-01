@@ -40,7 +40,16 @@ function EmptyBody({ pane }: { pane: Pane }) {
   );
 }
 
-export function PaneView({ pane, session }: { pane: Pane; session: Session }) {
+export function PaneView({
+  pane,
+  session,
+  full = false,
+}: {
+  pane: Pane;
+  session: Session;
+  /** 이 창 혼자 세션 영역을 채우고 있는가 (전체화면). */
+  full?: boolean;
+}) {
   const editMode = useStore((s) => s.editMode);
   const sel = useStore((s) => s.sel);
   const mergeSet = useStore((s) => s.mergeSet);
@@ -52,6 +61,7 @@ export function PaneView({ pane, session }: { pane: Pane; session: Session }) {
   const zoomBy = useStore((s) => s.zoomBy);
   const zoomReset = useStore((s) => s.zoomReset);
   const setMdMode = useStore((s) => s.setMdMode);
+  const toggleFull = useStore((s) => s.toggleFull);
 
   const inMerge = !!mergeSet?.includes(pane.id);
   const marked = inMerge || (editMode && sel === pane.id);
@@ -80,16 +90,29 @@ export function PaneView({ pane, session }: { pane: Pane; session: Session }) {
         isEmpty ? 'pane--empty' : '',
         marked ? 'pane--marked' : '',
         dimmed ? 'pane--dimmed' : '',
+        full ? 'pane--full' : '',
       ]
         .filter(Boolean)
         .join(' ')}
-      style={{ gridArea: `${pane.r} / ${pane.c} / span ${pane.rs} / span ${pane.cs}` }}
+      style={{
+        gridArea: full
+          ? '1 / 1 / span 1 / span 1'
+          : `${pane.r} / ${pane.c} / span ${pane.rs} / span ${pane.cs}`,
+      }}
       onMouseDown={() => paneMouseDown(pane.id)}
       onMouseEnter={() => paneMouseEnter(pane.id)}
       onContextMenu={onCtx}
     >
       {!isEmpty && kind && (
-        <div className={`pane__head${dark ? ' pane__head--dark' : ''}`} onContextMenu={onCtx}>
+        <div
+          className={`pane__head${dark ? ' pane__head--dark' : ''}`}
+          onContextMenu={onCtx}
+          onDoubleClick={(e) => {
+            // 창 제목줄 더블클릭 = 전체화면 토글. 줄 안의 버튼은 제 일을 하게 둔다.
+            if ((e.target as Element).closest('button')) return;
+            void toggleFull(pane.id);
+          }}
+        >
           <div
             className="pane__kind"
             style={{ color: kind.fg, borderColor: kind.ring, background: kind.bg }}
@@ -164,6 +187,20 @@ export function PaneView({ pane, session }: { pane: Pane; session: Session }) {
           </div>
           )}
 
+          <button
+            className={`pane__icon${full ? ' pane__icon--on' : ''}`}
+            title={
+              full
+                ? '창 모드로 · Ctrl+Shift+F (제목줄 더블클릭)'
+                : '이 창만 전체화면 · Ctrl+Shift+F (제목줄 더블클릭)'
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              void toggleFull(pane.id);
+            }}
+          >
+            {full ? '⤡' : '⤢'}
+          </button>
           <button className="pane__icon" title="창 메뉴" onClick={onCtx}>
             ⋮
           </button>

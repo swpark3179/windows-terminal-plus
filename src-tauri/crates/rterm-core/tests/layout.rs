@@ -4,8 +4,9 @@
 //! 5가지 조합을 모두 고정해 둔다.
 
 use rterm_core::{
-    layout, merge, merge_check, normalize, reset_weights, set_weights, split, swap, LayoutError,
-    MergeAxis, MergeReject, MergeVerdict, Pane, PaneKind, Session, SplitDir, TrackAxis,
+    close_pane, layout, merge, merge_check, normalize, reset_weights, set_full, set_weights, split,
+    swap, LayoutError, MergeAxis, MergeReject, MergeVerdict, Pane, PaneKind, Session, SplitDir,
+    TrackAxis,
 };
 
 /// 1×1 빈 세션.
@@ -522,4 +523,102 @@ fn old_snapshots_without_weights_get_even_ones() {
 
     assert_eq!(s.grid.col_weights, vec![1.0, 1.0]);
     assert_eq!(s.grid.row_weights, vec![1.0]);
+}
+
+// ────────────────────────────── 전체화면 ──────────────────────────────
+
+#[test]
+fn full_keeps_the_grid_so_window_mode_restores_the_layout() {
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    let b = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+    occupy(&mut s, &a, PaneKind::Term);
+
+    set_full(&mut s, Some(&a)).expect("full ok");
+
+    assert_eq!(s.full_pane_id.as_deref(), Some(a.as_str()));
+    // 격자와 두 창은 그대로 — 보는 방식만 바뀐다.
+    assert_eq!(dims(&s), (2, 1));
+    assert_eq!(rect(&s, &b), (1, 2, 1, 1));
+
+    set_full(&mut s, None).expect("window mode ok");
+    assert_eq!(s.full_pane_id, None);
+    assert_eq!(dims(&s), (2, 1));
+}
+
+#[test]
+fn empty_block_cannot_be_shown_full() {
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+
+    assert_eq!(set_full(&mut s, Some(&a)), Err(LayoutError::CannotFullEmpty));
+    assert_eq!(set_full(&mut s, Some("없는-창")), Err(LayoutError::PaneNotFound));
+    assert_eq!(s.full_pane_id, None);
+}
+
+#[test]
+fn closing_the_full_pane_falls_back_to_window_mode() {
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    split(&mut s, &a, SplitDir::LeftRight).unwrap();
+    occupy(&mut s, &a, PaneKind::Term);
+    set_full(&mut s, Some(&a)).unwrap();
+
+    close_pane(&mut s, &a).unwrap();
+    layout::ensure_non_empty(&mut s);
+
+    // 빈 블럭 하나만 화면을 가득 채우는 막다른 상태가 되면 안 된다.
+    assert_eq!(s.full_pane_id, None);
+}
+
+#[test]
+fn merging_away_the_full_pane_falls_back_to_window_mode() {
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    let b = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+    occupy(&mut s, &a, PaneKind::Term);
+    set_full(&mut s, Some(&a)).unwrap();
+
+    // 점유된 a 가 남고 빈 블럭 b 가 흡수된다 — 남은 쪽이 전체화면이면 그대로 유지된다.
+    let plan = merge(&mut s, &[a.clone(), b.clone()]).unwrap();
+    layout::ensure_non_empty(&mut s);
+    assert_eq!(plan.keep_id, a);
+    assert_eq!(s.full_pane_id.as_deref(), Some(a.as_str()));
+
+    // 반대로 사라지는 쪽이 전체화면이었다면 창 모드로 돌아간다.
+    let c = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+    s.full_pane_id = Some(c.clone()); // 빈 블럭이 전체화면인 상태를 억지로 만든다
+    merge(&mut s, &[a.clone(), c.clone()]).unwrap();
+    layout::ensure_non_empty(&mut s);
+    assert_eq!(s.full_pane_id, None);
+}
+
+#[test]
+fn splitting_a_full_pane_returns_to_window_mode() {
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    occupy(&mut s, &a, PaneKind::Term);
+    set_full(&mut s, Some(&a)).unwrap();
+
+    // 새로 생긴 빈 블럭이 전체화면 뒤에 숨으면 "분할했는데 아무 일도 안 일어난다".
+    let b = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+
+    assert_eq!(s.full_pane_id, None);
+    assert_eq!(rect(&s, &b), (1, 2, 1, 1));
+}
+
+#[test]
+fn opening_a_file_in_a_hidden_block_returns_to_window_mode() {
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    let b = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+    occupy(&mut s, &a, PaneKind::Term);
+    set_full(&mut s, Some(&a)).unwrap();
+
+    let mut doc = Pane::empty(1, 1, 1, 1);
+    doc.kind = PaneKind::Md;
+    doc.title = "README.md".into();
+    layout::place_pane(&mut s, doc, Some(&b)).expect("빈 블럭에 들어간다");
+
+    assert_eq!(s.full_pane_id, None, "방금 연 문서가 전체화면 뒤에 가려지면 안 된다");
 }
