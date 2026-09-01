@@ -22,13 +22,18 @@ src/                          React + TypeScript — 렌더와 입력만 담당
   state/store.ts              zustand — Rust 스냅샷 미러 + 화면 전용 상태
   ipc/bridge.ts               타입 붙인 invoke 래퍼 (여기 밖에서 invoke 금지)
   lib/markdown.ts             디자인의 mdToHtml 이식
+  lib/clipboard.ts            붙여넣기·복사 글자 다듬기                ← 순수, 테스트 대상
+  lib/terminalRegistry.ts     창 id → 그 창의 복사·붙여넣기 손잡이
 
 src-tauri/
   src/commands/               세션 · 레이아웃 · PTY · 파일 명령
-  src/state.rs                스냅샷 한 벌 + 살아있는 PTY 목록
+  src/state.rs                스냅샷 한 벌 + 살아있는 PTY 목록 + 셸이 알려 준 것
+  src/shellinit.rs            셸별 통합 주입 (pwsh 스크립트 · cmd PROMPT · WSLENV)
+  src/aiscan.rs               셸 자손을 훑어 돌고 있는 claude/codex 찾기
   crates/rterm-core/          세션 모델 · 레이아웃 대수 · 스냅샷      ← 순수, 테스트 대상
   crates/rterm-pty/           portable-pty(ConPTY) 스폰 · 읽기/대기 스레드
   crates/rterm-term/          alacritty_terminal 래퍼 · 8k 스크롤백 · ANSI 직렬화
+  crates/rterm-term/src/osc.rs  셸 통합 마커(OSC 7 · 9;9) 스캐너
 ```
 
 글꼴은 구글 산세리프 두 벌을 겹쳐 쓴다 — 라틴/숫자는 **Roboto**, 한글은 **Noto Sans KR**,
@@ -106,11 +111,42 @@ src-tauri/
 세션을 옮겨 다녀도 셸은 죽지 않는다. xterm 이 사라지면 `pty_detach` 로 출력 채널만 떼고,
 돌아오면 `pty_open` 이 살아 있는 슬롯에 다시 붙어 Rust 버퍼를 replay 한다.
 
+### 셸 통합
+
+윈도우에서는 남의 프로세스 작업 폴더를 밖에서 읽을 수 없다. 그래서 Windows Terminal 과 같은 방법을
+쓴다 — **셸이 프롬프트마다 `OSC 9;9;<경로>` 로 스스로 알리게** 하고, `rterm-term` 의 전용 스캐너가
+그 바이트를 건진다(`alacritty_terminal` 은 창 제목 말고는 OSC 를 올려 주지 않는다).
+
+| 셸 | 방법 |
+| --- | --- |
+| `pwsh` · `powershell` | `%APPDATA%\rterm\shell\rterm-init.ps1` 을 `-NoExit -Command ". …"` 로 dot-source. 프로필이 로드된 **뒤** 라서 사용자 `prompt` 를 덮지 않고 감싼다 |
+| `cmd` | `PROMPT=$e]9;9;$P$e\$P$G` 환경변수 하나로 끝 |
+| `wsl` | `PROMPT_COMMAND` 를 `WSLENV` 에 얹어 넘기고, 복원할 때는 `wsl.exe --cd` |
+| `ssh` | 없음 — 원격 셸은 우리 것이 아니다 |
+
+`RTERM_NO_SHELL_INTEGRATION` 을 세우면 통째로 꺼진다. oh-my-posh 처럼 `prompt` 를 나중에 다시
+정의하는 도구를 쓰면 마커가 사라지는데, 그때는 폴더 복원만 조용히 꺼질 뿐 아무것도 깨지지 않는다.
+
 ## 스냅샷
 
 `%APPDATA%\rterm\sessions\snapshot.json` (tmp → rename 원자적 쓰기).
-세션 · 레이아웃 · 터미널 스크롤백 8,192 라인 · 창별 확대 배율 · 마크다운 뷰 모드를 기록한다.
-레이아웃이 바뀔 때마다 즉시 저장하고, 스크롤백은 창을 닫을 때와 2분마다 갱신한다.
+세션 · 레이아웃 · 터미널 스크롤백 8,192 라인 · 창별 확대 배율 · 마크다운 뷰 모드,
+그리고 **창별 작업 폴더와 그 창에서 돌고 있던 AI** 를 기록한다.
+레이아웃이 바뀔 때마다 즉시 저장하고, 나머지는 창을 닫을 때와 2분마다 갱신한다.
+
+### 끄기 전 상태로 돌아오기
+
+다시 켜면 각 터미널이 **끄기 전 폴더** 에서 뜬다. 셸 통합이 알려 준 폴더를 창마다 기억해 두었다가
+`pty_open` 이 그 자리에서 셸을 띄우기 때문이다. 그 폴더가 없어졌으면 세션 기본 폴더로 물러서고,
+물러섰다는 사실을 복원 배너에 적는다.
+
+`claude` 나 `codex` 가 돌고 있었다면 그것도 다시 띄운다. 무엇이 돌고 있었는지는 스냅샷을 저장하는
+순간 **셸의 자손 프로세스를 한 번 훑어** 알아낸다 — 사용자가 직접 쳤든 ↑ 로 불러왔든 탭 완성으로
+채웠든 같은 답이 나온다. 폴더가 먼저 복원되므로 이어붙이기는 세션 ID 없이
+`claude --continue` / `codex resume --last` 로 충분하다.
+
+한계: WSL·SSH 창의 AI 는 복원하지 않는다(프로세스가 가상머신·원격 안에 있어 보이지 않는다).
+WSL 의 폴더 복원은 `wsl.exe --cd` 로 동작하고, SSH 는 폴더도 복원하지 않는다.
 
 ## 파일 열기
 
@@ -162,6 +198,9 @@ src-tauri/
 
 | 키 | 동작 |
 | --- | --- |
+| `Ctrl+C` / `Ctrl+V` | 터미널 복사 · 붙여넣기 (아래 참조) |
+| `Ctrl+Shift+C` / `Ctrl+Shift+V` | 터미널 복사 · 붙여넣기 (셸 키를 가리지 않는 쪽) |
+| `Ctrl+Insert` / `Shift+Insert` | 같은 것, 옛 방식 |
 | `Ctrl+Shift+P` | 명령 팔레트 |
 | `Ctrl+B` / `Ctrl+Shift+B` | 사이드바 접기·펼치기 |
 | `Ctrl+E` / `Ctrl+Shift+E` | 레이아웃 편집 모드 |
@@ -172,14 +211,31 @@ src-tauri/
 | `Ctrl+±` · `Ctrl+0` · `Ctrl+휠` | 창별 확대 |
 | `Esc` | 열린 오버레이 닫기 |
 
-터미널에 포커스가 있을 때는 위 표의 `Ctrl+Shift+*` · `Ctrl+,` · `Ctrl+S` · 확대 조합만 앱이
-가져가고 나머지는 전부 셸로 간다(`Ctrl+B`/`Ctrl+E` 같은 readline 편집이 살아 있다).
+터미널에 포커스가 있을 때는 위 표의 `Ctrl+Shift+*` · `Ctrl+,` · `Ctrl+S` · 확대 조합과
+클립보드 조합만 앱이 가져가고 나머지는 전부 셸로 간다(`Ctrl+B`/`Ctrl+E` 같은 readline 편집이 살아 있다).
+
+### 클립보드
+
+윈도우 터미널과 같은 규칙이다.
+
+- **`Ctrl+C`** — 선택한 영역이 있으면 복사하고 선택을 지운다. 없으면 예전 그대로 `^C` 가 셸로 가
+  실행 중인 명령을 끊는다. 복사 뒤 선택이 지워지므로 한 번 더 누르면 언제나 인터럽트다.
+- **`Ctrl+V`** — 붙여넣기. 단 `vim`·`less`·`tmux` 처럼 **대체 화면** 을 쓰는 프로그램 안에서는
+  그 프로그램에게 넘긴다(비주얼 블록 선택이 살아 있다). 일반 프롬프트에서는 readline 의
+  quoted-insert 를 가리므로, 그 자리에는 `Ctrl+Q` 를 쓴다.
+- `Ctrl+Shift+C/V`, `Ctrl+Insert`/`Shift+Insert`, 가운데 클릭, 우클릭 메뉴도 모두 같은 일을 한다.
+- 붙여넣기는 **괄호 붙여넣기(bracketed paste)** 로 감싸여 들어가므로 여러 줄을 붙여도 한 줄씩
+  실행되지 않는다. 클립보드 안에 끝 표식(`ESC[201~`)이 들어 있으면 미리 지운다 —
+  그러지 않으면 그 뒤가 명령으로 실행된다.
+- `ssh`·`tmux`·`vim` 안에서 복사한 것도 **OSC 52** 로 윈도우 클립보드까지 온다.
+  반대 방향(원격이 내 클립보드를 읽는 것)은 막아 두었다.
+- 마우스를 쓰는 프로그램(`htop` 등)이 켜져 있을 때 드래그 선택은 `Shift` 를 함께 누른다.
 
 ## 테스트
 
 ```bash
-cd src-tauri && cargo test --workspace   # 69개 — 레이아웃 대수 · 트랙 몫 · 스냅샷 · PTY · VT 코어
-pnpm test                                # 102개 — 마크다운 · IME · 편집 기록 · 이미지 · 병합/크기 드래그
+cd src-tauri && cargo test --workspace   # 101개 — 레이아웃 대수 · 스냅샷 · PTY · VT 코어 · OSC 스캐너 · 셸 통합 · AI 감지
+pnpm test                                # 136개 — 마크다운 · IME · 편집 기록 · 이미지 · 병합/크기 드래그 · 클립보드
 ```
 
 `src-tauri/tests/terminal_pipeline.rs` 는 실제 ConPTY 를 띄워
@@ -191,7 +247,9 @@ PTY → 코어 → 직렬화 → 재주입 복원까지 한 번에 확인한다.
 
 - **AI 세션 이어붙이기** — 디자인은 터미널 입력에서 `claude --resume` 을 가로채 ID 를 붙이는
   방식이었다. 입력 가로채기는 readline 편집을 망가뜨리므로, 세션 헤더의 `claude`/`codex` 칩을
-  누르면 저장된 ID 로 명령을 실행하는 방식으로 옮겼다.
+  누르면 명령을 그대로 흘려보내는 방식으로 옮겼다. 저장해 두는 세션 ID 는 없다 —
+  `claude --continue` 와 `codex resume --last` 가 **그 창의 현재 폴더** 에서 가장 최근 대화를
+  알아서 찾고, 창의 폴더는 앱이 기억했다 복원하기 때문이다.
 - **파일 드롭** — Tauri 웹뷰는 HTML5 파일 드롭을 막으므로 네이티브 드래그 이벤트로 실제
   경로를 받는다.
 - **파일 저장** — 디자인에 없던 `Ctrl+S` 를 추가했다. `.md` 는 원문 그대로, 리치 텍스트는

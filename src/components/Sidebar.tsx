@@ -106,8 +106,8 @@ export function Sidebar() {
                   {s.shell} · {open} 창 · {s.grid.cols}×{s.grid.rows}
                 </span>
               </span>
-              {(s.claude || s.codex) && (
-                <span className="ai-badge" title="AI 세션 ID 저장됨">
+              {s.panes.some((p) => p.ai) && (
+                <span className="ai-badge" title="AI 실행 중">
                   AI
                 </span>
               )}

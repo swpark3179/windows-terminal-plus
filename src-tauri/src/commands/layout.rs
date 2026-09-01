@@ -177,6 +177,9 @@ pub fn pane_open_terminal(
         pane.mode = None;
         pane.scrollback = None;
         pane.alive = false;
+        // 새로 여는 창이 남의 폴더에서 뜨거나 AI 를 자동 실행하면 안 된다.
+        pane.cwd = None;
+        pane.ai = None;
         Ok(())
     })
 }

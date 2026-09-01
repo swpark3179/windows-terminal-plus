@@ -16,8 +16,6 @@ pub struct SessionPatch {
     pub shell: Option<Shell>,
     pub start: Option<String>,
     pub ssh_host: Option<String>,
-    pub claude: Option<String>,
-    pub codex: Option<String>,
     pub env: Option<Vec<EnvVar>>,
 }
 
@@ -55,6 +53,8 @@ pub fn session_duplicate(state: State<'_, AppState>, session_id: String) -> Resu
             pane.id = rterm_core::uid("p");
             pane.scrollback = None;
             pane.alive = false;
+            pane.cwd = None;
+            pane.ai = None;
         }
         let new_id = copy.id.clone();
         snap.sessions.push(copy);
@@ -118,12 +118,6 @@ pub fn session_update(
         }
         if let Some(v) = patch.ssh_host {
             s.ssh_host = v;
-        }
-        if let Some(v) = patch.claude {
-            s.claude = v;
-        }
-        if let Some(v) = patch.codex {
-            s.codex = v;
         }
         if let Some(v) = patch.env {
             s.env = v;

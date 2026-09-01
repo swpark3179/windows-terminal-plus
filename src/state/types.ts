@@ -7,6 +7,9 @@ export type PaneKind = 'empty' | 'term' | 'md' | 'text' | 'image';
 export type Shell = 'pwsh' | 'cmd' | 'wsl' | 'ssh';
 export type MdMode = 'view' | 'edit';
 
+/** 터미널 창에서 돌고 있는 AI CLI. */
+export type AiKind = 'claude' | 'codex';
+
 /** 디자인의 `dir: v/h` 에 대응. */
 export type SplitDir = 'leftRight' | 'topBottom';
 export type MergeAxis = 'row' | 'col';
@@ -40,6 +43,10 @@ export interface Pane {
   /** 폰트 px. 14 = 100%. */
   zoom: number;
   alive: boolean;
+  /** 셸이 알려 준 마지막 작업 폴더. 다음에 이 창을 열 때의 시작 위치. */
+  cwd?: string | null;
+  /** 스냅샷을 찍을 때 이 창에서 돌고 있던 AI CLI. */
+  ai?: AiKind | null;
   path?: string | null;
   content?: string | null;
   mode?: MdMode | null;
@@ -55,8 +62,6 @@ export interface Session {
   shell: Shell;
   start: string;
   sshHost: string;
-  claude: string;
-  codex: string;
   color: number;
   env: EnvVar[];
   grid: Grid;
@@ -146,8 +151,6 @@ export interface SessionPatch {
   shell?: Shell;
   start?: string;
   sshHost?: string;
-  claude?: string;
-  codex?: string;
   env?: EnvVar[];
 }
 

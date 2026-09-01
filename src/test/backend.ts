@@ -36,8 +36,6 @@ export function makeSnapshot(): Snapshot {
     shell: 'pwsh',
     start: '',
     sshHost: '',
-    claude: '',
-    codex: '',
     color: 0,
     env: [],
     grid: { cols: 2, rows: 1, colWeights: [1, 1], rowWeights: [1] },
@@ -157,6 +155,10 @@ export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> 
     }
     case 'pty_open':
       return { restored: '', banner: '', attached: false };
+    case 'pty_run_ai': {
+      const kind = (args as { kind?: string } | undefined)?.kind;
+      return kind === 'codex' ? 'codex resume --last' : 'claude --continue';
+    }
     case 'pty_write':
     case 'pty_resize':
     case 'pty_detach':

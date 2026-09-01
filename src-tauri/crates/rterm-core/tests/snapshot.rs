@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use rterm_core::{split, PaneKind, Session, Shell, Snapshot, SplitDir};
+use rterm_core::{split, AiKind, PaneKind, Session, Shell, Snapshot, SplitDir};
 
 /// 테스트마다 겹치지 않는 임시 디렉터리.
 fn temp_dir(tag: &str) -> PathBuf {
@@ -34,7 +34,6 @@ fn layout_scrollback_and_zoom_survive_a_save_load_cycle() {
     {
         let session = &mut snap.sessions[0];
         session.shell = Shell::Cmd;
-        session.claude = "sess_abc".into();
         let root = session.panes[0].id.clone();
         split(session, &root, SplitDir::LeftRight).expect("split");
 
@@ -44,6 +43,9 @@ fn layout_scrollback_and_zoom_survive_a_save_load_cycle() {
         pane.zoom = 18;
         pane.scrollback = Some("\u{1b}[32mok\u{1b}[0m\r\n".into());
         pane.alive = true;
+        // 끄기 전 상태 — 어느 폴더에 있었고 무엇이 돌고 있었는지.
+        pane.cwd = Some("C:/work/demo/sub".into());
+        pane.ai = Some(AiKind::Claude);
     }
 
     snap.save(&path).expect("save");
@@ -55,7 +57,6 @@ fn layout_scrollback_and_zoom_survive_a_save_load_cycle() {
 
     let session = &loaded.sessions[0];
     assert_eq!(session.shell, Shell::Cmd);
-    assert_eq!(session.claude, "sess_abc");
     assert_eq!(session.grid.cols, 2, "그리드 배치가 그대로");
     assert_eq!(session.panes.len(), 2);
 
@@ -67,10 +68,68 @@ fn layout_scrollback_and_zoom_survive_a_save_load_cycle() {
     assert_eq!(term.title, "cmd · 빌드");
     assert_eq!(term.zoom, 18, "확대 배율도 창별로 기록된다");
     assert_eq!(term.scrollback.as_deref(), Some("\u{1b}[32mok\u{1b}[0m\r\n"));
+    assert_eq!(
+        term.cwd.as_deref(),
+        Some("C:/work/demo/sub"),
+        "창이 있던 폴더가 그대로 돌아와야 다시 그 자리에서 셸이 뜬다"
+    );
+    assert_eq!(term.ai, Some(AiKind::Claude), "돌고 있던 AI 도 기억한다");
     assert!(!term.alive, "PTY 는 재스폰되므로 alive 는 항상 꺼진 채로 복원된다");
 
     assert!(loaded.saved_at_epoch.is_some());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_old_snapshot_with_ai_session_ids_still_loads() {
+    // 설정 화면에서 손으로 넣던 claude/codex 세션 ID 를 없앴다. 그 값이 남아 있는 기존
+    // snapshot.json 도 그대로 읽혀야 한다 — serde 는 모르는 필드를 무시하므로 공짜지만,
+    // 나중에 누가 deny_unknown_fields 를 붙이면 사용자 스냅샷이 통째로 날아간다.
+    let dir = temp_dir("legacy");
+    let path = Snapshot::path_in(&dir);
+    std::fs::create_dir_all(path.parent().unwrap()).expect("dir");
+    std::fs::write(
+        &path,
+        r#"{
+          "version": 1,
+          "activeId": "ses_old",
+          "sidebarOpen": true,
+          "sessions": [{
+            "id": "ses_old",
+            "name": "예전 세션",
+            "cwd": "C:/work/demo",
+            "shell": "pwsh",
+            "start": "",
+            "sshHost": "",
+            "claude": "sess_abc",
+            "codex": "cx_123",
+            "color": 0,
+            "env": [],
+            "grid": { "cols": 1, "rows": 1, "colWeights": [1.0], "rowWeights": [1.0] },
+            "panes": [{
+              "id": "p1", "kind": "term", "title": "pwsh",
+              "r": 1, "c": 1, "rs": 1, "cs": 1, "zoom": 14, "dirty": false
+            }]
+          }]
+        }"#,
+    )
+    .expect("write");
+
+    let loaded = Snapshot::load(&path).expect("예전 스냅샷도 읽혀야 한다");
+    assert_eq!(loaded.sessions.len(), 1);
+    assert_eq!(loaded.sessions[0].name, "예전 세션");
+    let pane = &loaded.sessions[0].panes[0];
+    assert_eq!(pane.cwd, None, "없던 필드는 비어서 들어온다");
+    assert_eq!(pane.ai, None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ai_resume_commands_need_no_session_id() {
+    // 두 명령 모두 "현재 폴더의 가장 최근 대화" 를 잇는다. 창의 폴더를 복원하니
+    // 세션 ID 를 손으로 넣을 이유가 없어졌다 — 이 문자열이 그 근거다.
+    assert_eq!(AiKind::Claude.resume_command(), "claude --continue");
+    assert_eq!(AiKind::Codex.resume_command(), "codex resume --last");
 }
 
 #[test]

@@ -1,8 +1,8 @@
 import { activeSession, useStore } from '../state/store';
-import { DOT_COLORS, SHELL_LABELS, type EnvVar, type Shell } from '../state/types';
+import { DOT_COLORS, SHELL_LABELS, type AiKind, type EnvVar, type Shell } from '../state/types';
 import { TextField } from './TextField';
 
-/** 세션 설정 — 일반 · AI 세션 ID · 환경변수 · 종료 후 복원 요약. */
+/** 세션 설정 — 일반 · 환경변수 · 종료 후 복원 요약. */
 export function SettingsModal() {
   const open = useStore((s) => s.settings);
   const snapshot = useStore((s) => s.snapshot);
@@ -16,14 +16,20 @@ export function SettingsModal() {
 
   const openFiles = session.panes.filter((p) => p.kind === 'md' || p.kind === 'text').length;
   const liveTerms = session.panes.filter((p) => p.kind === 'term' && p.alive).length;
+  const rememberedCwds = session.panes.filter((p) => p.cwd).length;
+  const runningAi = [...new Set(session.panes.map((p) => p.ai).filter(Boolean))] as AiKind[];
 
   const restoreRows = [
     { label: '창 배치 · 그리드', val: `${session.grid.cols}×${session.grid.rows} · ${session.panes.length} 블럭` },
     { label: '터미널 스크롤백', val: `8,192 라인 · 실행 중 ${liveTerms}` },
     { label: '열려 있던 파일', val: `${openFiles} 개` },
     {
-      label: 'AI 세션 ID',
-      val: [session.claude ? 'claude' : '', session.codex ? 'codex' : ''].filter(Boolean).join(' ') || '없음',
+      label: '창별 작업 폴더',
+      val: rememberedCwds > 0 ? `${rememberedCwds} 개 기억` : '아직 없음',
+    },
+    {
+      label: '실행 중이던 AI',
+      val: runningAi.length > 0 ? runningAi.join(' ') : '없음',
     },
     { label: '확대 배율 · 뷰어 모드', val: '창별로 기록' },
   ];
@@ -95,31 +101,6 @@ export function SettingsModal() {
           </section>
 
           <section>
-            <div className="settings__section-label">AI 세션</div>
-            <div className="settings__grid">
-              <label className="field field--claude">
-                <span className="field__label">Claude 세션 ID</span>
-                <TextField
-                  value={session.claude}
-                  placeholder="sess_..."
-                  onCommit={(claude) => void patch({ claude })}
-                />
-              </label>
-              <label className="field field--codex">
-                <span className="field__label">Codex 세션 ID</span>
-                <TextField
-                  value={session.codex}
-                  placeholder="cx_..."
-                  onCommit={(codex) => void patch({ codex })}
-                />
-              </label>
-            </div>
-            <div className="settings__note">
-              세션 헤더의 claude / codex 칩을 누르면 이 ID 로 resume 명령을 실행합니다
-            </div>
-          </section>
-
-          <section>
             <div className="env-head">
               <div className="settings__section-label" style={{ marginBottom: 0 }}>
                 환경변수
@@ -172,6 +153,11 @@ export function SettingsModal() {
                   <span className="restore-row__val">{r.val}</span>
                 </div>
               ))}
+            </div>
+            <div className="settings__note">
+              {session.shell === 'ssh'
+                ? 'SSH 세션은 원격 셸이라 작업 폴더를 기억하지 못합니다'
+                : '창마다 마지막 작업 폴더와 실행 중이던 claude / codex 를 기억했다가 다시 띄웁니다'}
             </div>
           </section>
         </div>

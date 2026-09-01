@@ -40,9 +40,10 @@ where
     Ok(read_snapshot(state))
 }
 
-/// 락을 짧게 잡고 스냅샷 사본을 뜬다. `alive` 는 실제 PTY 상태로 맞춰서 나간다.
+/// 락을 짧게 잡고 스냅샷 사본을 뜬다.
+/// `alive` 와 창별 작업 폴더는 실제 런타임 상태로 맞춰서 나간다.
 pub fn read_snapshot(state: &AppState) -> Snapshot {
-    state.sync_alive();
+    state.sync_runtime();
     state.snapshot.lock().clone()
 }
 

@@ -8,6 +8,7 @@ import {
   writeText as pluginWriteText,
 } from '@tauri-apps/plugin-clipboard-manager';
 import type {
+  AiKind,
   Boot,
   FileEntry,
   ImageDoc,
@@ -92,9 +93,14 @@ export const writePty = (paneId: string, data: string) => invoke<void>('pty_writ
 export const resizePty = (paneId: string, cols: number, rows: number) =>
   invoke<void>('pty_resize', { paneId, cols, rows });
 
-/** 세션에 저장된 AI 세션 ID 로 resume 명령을 실행한다. */
-export const runAi = (sessionId: string, paneId: string, kind: 'claude' | 'codex') =>
-  invoke<string>('pty_run_ai', { sessionId, paneId, kind });
+/**
+ * 고른 창에서 AI 대화를 이어붙인다.
+ *
+ * 세션 ID 는 넘기지 않는다 — `claude --continue` / `codex resume --last` 가 그 창의
+ * 현재 폴더에서 가장 최근 대화를 알아서 찾는다.
+ */
+export const runAi = (paneId: string, kind: AiKind) =>
+  invoke<string>('pty_run_ai', { paneId, kind });
 
 // ── 파일 ─────────────────────────────────────────────────
 export const listFiles = (cwd: string) => invoke<FileEntry[]>('fs_list', { cwd });
