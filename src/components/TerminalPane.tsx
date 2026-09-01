@@ -166,6 +166,8 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
           e.preventDefault();
           e.stopPropagation();
           if (action === 'paste') pasteClipboard();
+          // 순수 LF — 이미 아무 데서나 그냥 통과하는 Ctrl+J 와 같은 바이트라 vim 등에서도 무해하다.
+          else if (action === 'newline') void writePty(pane.id, '\n').catch(() => {});
           else void copySelection();
           return false;
         }

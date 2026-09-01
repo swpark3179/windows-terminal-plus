@@ -31,6 +31,7 @@ vi.mock('@xterm/addon-clipboard', () => ({ ClipboardAddon: class {}, Base64: cla
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 
 import { TerminalPane } from './TerminalPane';
+import { backend } from '../test/backend';
 import { lastTerminal, resetTerminalStub } from '../test/xtermStub';
 import { MAX_PASTE_CHARS } from '../lib/clipboard';
 import { terminalClipboard } from '../lib/terminalRegistry';
@@ -162,6 +163,31 @@ describe('붙여넣기', () => {
 
     fireEvent.mouseDown(view.container.querySelector('.term-body')!, { button: 1 });
     await waitFor(() => expect(term.pasted).toEqual(['middle']));
+  });
+});
+
+describe('줄바꿈', () => {
+  it('Shift+Enter 와 Ctrl+Enter 는 LF 를 셸로 보낸다 — Ctrl+J 와 같은 바이트라 claude·codex 둘 다 알아듣는다', async () => {
+    const { press } = mount();
+
+    expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+    await waitFor(() => expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: '\n' }));
+
+    expect(press({ key: 'Enter', ctrlKey: true })).toBe(false);
+    await waitFor(() => expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: '\n' }));
+  });
+
+  it('그냥 Enter 는 건드리지 않는다 — 평소처럼 셸로 간다', () => {
+    const { press } = mount();
+    expect(press({ key: 'Enter' })).toBe(true);
+  });
+
+  it('대체 화면(vim)에서도 그대로 LF 를 보낸다 — 원래 Ctrl+J 도 무해하게 통과하던 자리다', async () => {
+    const { term, press } = mount();
+    term.buffer.active.type = 'alternate';
+
+    expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+    await waitFor(() => expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: '\n' }));
   });
 });
 

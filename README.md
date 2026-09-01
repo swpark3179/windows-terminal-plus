@@ -222,6 +222,7 @@ WSL 의 폴더 복원은 `wsl.exe --cd` 로 동작하고, SSH 는 폴더도 복�
 | `Ctrl+B` / `Ctrl+Shift+B` | 사이드바 접기·펼치기 |
 | `Ctrl+E` / `Ctrl+Shift+E` | 레이아웃 편집 모드 |
 | `Ctrl+Shift+F` | 고른 창 전체화면 · 창 모드 전환 |
+| `Shift+Enter` / `Ctrl+Enter` | 터미널 줄바꿈 — `claude`·`codex` 안에서 (아래 참조) |
 | `Ctrl+,` | 세션 설정 |
 | `Ctrl+S` | 편집 중인 파일 저장 |
 | `Ctrl+Z` / `Ctrl+Y` | 편집 되돌리기 / 다시 실행 (텍스트 편집기) |
@@ -248,12 +249,29 @@ WSL 의 폴더 복원은 `wsl.exe --cd` 로 동작하고, SSH 는 폴더도 복�
 - `ssh`·`tmux`·`vim` 안에서 복사한 것도 **OSC 52** 로 윈도우 클립보드까지 온다.
   반대 방향(원격이 내 클립보드를 읽는 것)은 막아 두었다.
 - 마우스를 쓰는 프로그램(`htop` 등)이 켜져 있을 때 드래그 선택은 `Shift` 를 함께 누른다.
+- **`claude`·`codex` 안에서도 그대로 된다** — 드래그 선택 → `Ctrl+C` 는 어떤 프로그램이 셸에서
+  돌든 상관없이 화면에 찍힌 글자만 본다. 두 CLI 모두 채팅 화면에서는 마우스 모드를 켜지 않으니
+  평소처럼 드래그하면 되고, 혹시 어떤 서브 화면이 마우스를 가져가더라도 위 `htop` 예외와 같이
+  `Shift+드래그` 로 우회된다.
+
+### 줄바꿈
+
+일반 터미널은 `Shift`·`Ctrl` 을 누르고 있어도 `Enter` 를 그냥 CR 한 글자로 뭉개 버려서, 셸이
+평범한 `Enter`(제출)와 구분할 수 없다. `Shift+Enter`/`Ctrl+Enter` 는 `Ctrl+J` 와 똑같은 LF
+한 글자(`\n`)를 보낸다 — 이 터미널이 뭔지 모를 때 `claude`·`codex` 둘 다 공통으로 알아듣는
+줄바꿈 경로가 바로 이거다(`claude` 의 도움말도 셸을 못 알아볼 땐 `ctrl+j` 를 안내하고,
+`codex` 는 애초에 `Ctrl+J` 를 줄바꿈으로 하드코딩해 뒀다). Claude Code 공식 `/terminal-setup`
+이 쓰는 `ESC+CR`(메타+엔터) 관례는 일부러 쓰지 않았다 — `codex` 는 그 조합을 못 알아듣고
+그냥 제출해 버린다(업스트림에도 같은 증상의 Alt+Enter 리그레션 이슈가 있다).
+
+LF 는 이미 지금도 아무 데서나(`vim`·`less`·`tmux` 의 대체 화면 포함) 별 처리 없이 통과하던
+`Ctrl+J` 와 같은 바이트라서, 대체 화면을 따로 가리지 않는다.
 
 ## 테스트
 
 ```bash
 cd src-tauri && cargo test --workspace   # 101개 — 레이아웃 대수 · 스냅샷 · PTY · VT 코어 · OSC 스캐너 · 셸 통합 · AI 감지
-pnpm test                                # 136개 — 마크다운 · IME · 편집 기록 · 이미지 · 병합/크기 드래그 · 클립보드
+pnpm test                                # 147개 — 마크다운 · IME · 편집 기록 · 이미지 · 병합/크기 드래그 · 클립보드 · 줄바꿈
 ```
 
 `src-tauri/tests/terminal_pipeline.rs` 는 실제 ConPTY 를 띄워
