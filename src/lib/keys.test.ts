@@ -46,6 +46,25 @@ describe('terminalKeyAction', () => {
     expect(terminalKeyAction(key({ key: 'Enter' }))).toBeNull();
   });
 
+  it('한글 입력 중이라 글자가 없으면 물리 키로 읽는다 — Ctrl+V 만 새어 나가던 증상', () => {
+    // 크로미움은 한글 조합 상태에서 글자 대신 'Process'(keyCode 229)를 준다. 그러면 'v' 판정이
+    // 통째로 빗나가, Shift+Insert 는 되는데 Ctrl+V 만 안 되는 비대칭이 생긴다.
+    expect(terminalKeyAction(key({ key: 'Process', code: 'KeyV', ctrlKey: true }))).toBe('paste');
+    expect(terminalKeyAction(key({ key: 'Process', code: 'KeyC', ctrlKey: true }))).toBe(
+      'copy-if-selection',
+    );
+    expect(terminalKeyAction(key({ key: 'Unidentified', code: 'Insert', shiftKey: true }))).toBe(
+      'paste',
+    );
+  });
+
+  it('글자가 있으면 글자가 진실이다 — 드보락 같은 자판에서 물리 키를 앞세우면 안 된다', () => {
+    // 드보락에서 'v' 를 치는 자리는 물리적으로 KeyK 다. 글자대로 붙여넣어야 한다.
+    expect(terminalKeyAction(key({ key: 'v', code: 'KeyK', ctrlKey: true }))).toBe('paste');
+    // 반대로 물리 KeyV 자리는 그 자판에서 다른 글자다 — 붙여넣기가 아니다.
+    expect(terminalKeyAction(key({ key: '.', code: 'KeyV', ctrlKey: true }))).toBeNull();
+  });
+
   it('그 밖의 조합은 건드리지 않는다', () => {
     expect(terminalKeyAction(key({ key: 'c' }))).toBeNull();
     expect(terminalKeyAction(key({ key: 'x', ctrlKey: true }))).toBeNull();

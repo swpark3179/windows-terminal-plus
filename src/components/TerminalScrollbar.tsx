@@ -1,11 +1,28 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Terminal } from '@xterm/xterm';
 
-import { type BarMetrics, dragStep, pageDirection, thumbOf } from '../lib/scrollbar';
+import {
+  type BarMetrics,
+  type Thumb,
+  dragStep,
+  pageDirection,
+  relDragOffset,
+  relScrollSteps,
+  relThumb,
+  sideOf,
+  thumbOf,
+} from '../lib/scrollbar';
+import { DELTA_PAGE, sendWheel } from '../lib/termWheel';
 import type { AiKind } from '../state/types';
 
 /** 막대 위에서 휠을 한 칸 굴렸을 때 넘길 줄 수. */
 const WHEEL_LINES = 3;
+
+/** 끄는 중일 때만 채워진다. `offsetPx` 는 포인터가 정한 손잡이 자리다. */
+type Drag =
+  | { mode: 'absolute'; grabPx: number; offsetPx: number }
+  /** 상대 모드는 자리 대신 **움직인 거리**를 센다 — `sent` 는 지금까지 보낸 휠 줄 수다. */
+  | { mode: 'relative'; startY: number; startPx: number; offsetPx: number; sent: number };
 
 /**
  * 터미널 스크롤 막대.
@@ -19,6 +36,11 @@ const WHEEL_LINES = 3;
  *   때마다 `ydisp` 를 하나씩 줄이기 때문이다 — 글자는 제자리인데 손잡이만 위로 기어오른다.
  *   그래서 **끄는 동안에는 손잡이 자리를 포인터가 쥐고**, 버퍼발 갱신은 길이만 건드린다.
  *
+ * 모드가 둘이다. **절대 모드**(일반 버퍼)는 손잡이 자리가 곧 보는 줄이라 `scrollToLine` 으로
+ * 옮긴다. **상대 모드**(대체 화면)는 xterm 스크롤백이 없어 옮길 것이 없으므로, 움직인 거리를
+ * 휠로 바꿔 프로그램에 보낸다(`lib/termWheel`) — claude 가 대체 화면에서 자기 대화이력을 넘기는
+ * 길이 바로 그것이다. 그쪽에서는 손잡이 자리가 아무 뜻도 없으므로 놓으면 바닥으로 돌아간다.
+ *
  * 기하는 전부 `lib/scrollbar` 에 있고 여기서는 배선만 한다. 손잡이의 크기·위치는 리액트 상태가
  * 아니라 DOM 에 직접 쓴다 — claude 가 답하는 내내 프레임마다 불리는 자리라 상태로 두면
  * 그동안 리액트 렌더가 같이 돈다.
@@ -28,16 +50,17 @@ export function TerminalScrollbar({ term, ai }: { term: Terminal; ai?: AiKind | 
   const thumbRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [dragging, setDragging] = useState(false);
-  /** 끄는 중일 때만 채워진다. `offsetPx` 는 포인터가 정한 손잡이 자리다. */
-  const dragRef = useRef<{ grabPx: number; offsetPx: number } | null>(null);
+  const [relative, setRelative] = useState(false);
+  const dragRef = useRef<Drag | null>(null);
 
-  /** 지금 터미널 상태. 대체 화면이거나 아직 배치 전이면 `null`. */
+  /** 대체 화면인가 — 스크롤백이 없어 막대가 휠 대역으로 도는 자리다. */
+  const isRelative = useCallback(() => term.buffer.active.type === 'alternate', [term]);
+
+  /** 지금 터미널 상태. 아직 배치 전이면 `null`. */
   const metrics = useCallback((): BarMetrics | null => {
     const track = trackRef.current;
     if (!track) return null;
     const buf = term.buffer.active;
-    // vim·less·tmux 의 대체 화면에는 스크롤백이 없다 — 스크롤할 것이 없으니 막대도 없다.
-    if (buf.type === 'alternate') return null;
     return {
       maxTop: buf.baseY,
       top: buf.viewportY,
@@ -48,14 +71,16 @@ export function TerminalScrollbar({ term, ai }: { term: Terminal; ai?: AiKind | 
 
   const paint = useCallback(() => {
     const m = metrics();
-    const t = m ? thumbOf(m) : null;
+    const rel = isRelative();
+    const t: Thumb | null = m ? (rel ? relThumb(m.trackPx) : thumbOf(m)) : null;
+    setRelative(rel);
     setVisible(!!t?.visible);
     const thumb = thumbRef.current;
     if (!thumb || !t?.visible) return;
     thumb.style.height = `${t.sizePx}px`;
     // 끄는 중이면 자리는 포인터의 것이다. 길이는 계속 따라가도 된다.
     thumb.style.top = `${dragRef.current ? dragRef.current.offsetPx : t.offsetPx}px`;
-  }, [metrics]);
+  }, [metrics, isRelative]);
 
   // 손잡이는 보일 때만 붙으므로 붙은 직후 한 번 더 칠한다 — 첫 프레임이 비지 않게.
   useLayoutEffect(paint, [visible, paint]);
@@ -97,6 +122,17 @@ export function TerminalScrollbar({ term, ai }: { term: Terminal; ai?: AiKind | 
       const thumb = thumbRef.current;
       const m = metrics();
       if (!drag || !track || !thumb || !m) return;
+
+      if (drag.mode === 'relative') {
+        // 끈 거리를 휠 칸 수로 바꿔 보낸다. 누적 총량과의 차이만 보내므로 되돌려 끌면 같이 돌아온다.
+        const want = relScrollSteps(drag.startY - e.clientY);
+        sendWheel(term, drag.sent - want);
+        drag.sent = want;
+        drag.offsetPx = relDragOffset(drag.startPx, e.clientY - drag.startY, m.trackPx);
+        thumb.style.top = `${drag.offsetPx}px`;
+        return;
+      }
+
       const step = dragStep(e.clientY - track.getBoundingClientRect().top, drag.grabPx, m);
       drag.offsetPx = step.offsetPx;
       // 프레임을 기다리지 않고 바로 옮긴다 — 손잡이가 커서에서 떨어지면 안 된다.
@@ -107,7 +143,7 @@ export function TerminalScrollbar({ term, ai }: { term: Terminal; ai?: AiKind | 
     const onUp = () => {
       dragRef.current = null;
       setDragging(false);
-      // 놓고 나면 다시 버퍼가 말하는 자리로 맞춘다.
+      // 놓고 나면 다시 버퍼가 말하는 자리로 맞춘다(상대 모드에서는 바닥).
       schedule();
     };
 
@@ -128,7 +164,10 @@ export function TerminalScrollbar({ term, ai }: { term: Terminal; ai?: AiKind | 
     e.stopPropagation();
     const trackTop = track.getBoundingClientRect().top;
     const thumbTop = e.currentTarget.getBoundingClientRect().top;
-    dragRef.current = { grabPx: e.clientY - thumbTop, offsetPx: thumbTop - trackTop };
+    const offsetPx = thumbTop - trackTop;
+    dragRef.current = isRelative()
+      ? { mode: 'relative', startY: e.clientY, startPx: offsetPx, offsetPx, sent: 0 }
+      : { mode: 'absolute', grabPx: e.clientY - thumbTop, offsetPx };
     setDragging(true);
   };
 
@@ -138,7 +177,13 @@ export function TerminalScrollbar({ term, ai }: { term: Terminal; ai?: AiKind | 
     if (!m) return;
     e.preventDefault();
     e.stopPropagation();
-    const dir = pageDirection(e.clientY - e.currentTarget.getBoundingClientRect().top, m);
+    const pointerPx = e.clientY - e.currentTarget.getBoundingClientRect().top;
+    if (isRelative()) {
+      // 한 화면 — 페이지 모드로 한 번 보내면 xterm 이 `deltaY × rows` 로 셈해 준다.
+      sendWheel(term, sideOf(pointerPx, relThumb(m.trackPx)), DELTA_PAGE);
+      return;
+    }
+    const dir = pageDirection(pointerPx, m);
     if (dir) term.scrollPages(dir);
   };
 
@@ -146,7 +191,12 @@ export function TerminalScrollbar({ term, ai }: { term: Terminal; ai?: AiKind | 
     // 막대는 `.xterm` 밖이라 xterm 의 휠 처리기가 못 본다. 대신 굴려 준다.
     // 단 Ctrl+휠 은 창 확대다 — App 의 전역 처리기가 가져가도록 그대로 흘려보낸다.
     if (e.ctrlKey) return;
-    term.scrollLines(Math.sign(e.deltaY) * WHEEL_LINES);
+    const lines = Math.sign(e.deltaY) * WHEEL_LINES;
+    if (isRelative()) {
+      sendWheel(term, lines);
+      return;
+    }
+    term.scrollLines(lines);
   };
 
   return (
@@ -157,11 +207,16 @@ export function TerminalScrollbar({ term, ai }: { term: Terminal; ai?: AiKind | 
         visible ? '' : 'term-scrollbar--off',
         // claude·codex 가 도는 창에서는 늘 또렷하게 — 거기서는 막대가 사실상 유일한 스크롤 수단이다.
         ai ? 'term-scrollbar--pinned' : '',
+        relative ? 'term-scrollbar--relative' : '',
         dragging ? 'term-scrollbar--dragging' : '',
       ]
         .filter(Boolean)
         .join(' ')}
-      title="스크롤 — 끌어서 이동 · 빈 곳을 누르면 한 화면"
+      title={
+        relative
+          ? '스크롤 — 끌어서 프로그램에 휠을 보낸다 · 빈 곳을 누르면 한 화면'
+          : '스크롤 — 끌어서 이동 · 빈 곳을 누르면 한 화면'
+      }
       onMouseDown={onTrackDown}
       onWheel={onWheel}
     >

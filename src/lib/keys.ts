@@ -13,7 +13,7 @@
  */
 export function appOwnsKey(e: KeyboardEvent): boolean {
   if (!e.ctrlKey) return false;
-  const k = e.key.toLowerCase();
+  const k = keyName(e);
   if (e.shiftKey) return k === 'p' || k === 'b' || k === 'e' || k === 'f';
   return k === ',' || k === 's' || k === '+' || k === '=' || k === '-' || k === '0';
 }
@@ -33,7 +33,33 @@ export function terminalFocused(): boolean {
 export type TerminalKeyAction = 'copy' | 'paste' | 'copy-if-selection' | 'newline' | null;
 
 /** 이벤트에서 실제로 읽는 값만 추린 모양 — 테스트에서 평범한 객체로 부를 수 있다. */
-export type KeyLike = Pick<KeyboardEvent, 'type' | 'key' | 'ctrlKey' | 'shiftKey' | 'altKey'>;
+export type KeyLike = Pick<KeyboardEvent, 'type' | 'key' | 'ctrlKey' | 'shiftKey' | 'altKey'> & {
+  /** 물리 키(`KeyV`·`Insert` …). `key` 가 글자를 못 줄 때만 쓴다. */
+  code?: string;
+};
+
+/**
+ * 판정에 쓸 키 이름.
+ *
+ * 한글 입력 상태에서는 크로미움이 글자 대신 `'Process'`(그리고 `keyCode` 229)를 주는 일이 있어
+ * `Ctrl+V` 가 통째로 새어 나간다 — `Shift+Insert` 는 `'Insert'` 라 IME 와 무관하게 늘 살아남는
+ * 것과 대비된다. 그때만 **물리 키**로 되짚는다. 평소에는 `key` 를 그대로 쓴다 — 드보락처럼 자판이
+ * 다르면 물리 키와 글자가 어긋나므로, 글자가 있을 때는 글자가 진실이다.
+ */
+function keyName(e: KeyLike): string {
+  const k = e.key.toLowerCase();
+  if (k !== 'process' && k !== 'unidentified') return k;
+  switch (e.code) {
+    case 'KeyC':
+      return 'c';
+    case 'KeyV':
+      return 'v';
+    case 'Insert':
+      return 'insert';
+    default:
+      return k;
+  }
+}
 
 export function terminalKeyAction(e: KeyLike): TerminalKeyAction {
   // 같은 처리기가 keypress·keyup 에도 불린다. 걸러 내지 않으면 한 번 누를 때 두 번 붙는다.
@@ -41,7 +67,7 @@ export function terminalKeyAction(e: KeyLike): TerminalKeyAction {
   // 윈도우에서 AltGr 은 ctrlKey + altKey 로 들어온다. 가로채면 그 자판의 문자 입력이 죽는다.
   if (e.altKey) return null;
 
-  const k = e.key.toLowerCase();
+  const k = keyName(e);
 
   if (k === 'insert') {
     if (e.ctrlKey && !e.shiftKey) return 'copy';

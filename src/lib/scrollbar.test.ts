@@ -10,9 +10,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MIN_THUMB_PX,
+  REL_PX_PER_STEP,
   type BarMetrics,
   dragStep,
   pageDirection,
+  relDragOffset,
+  relScrollSteps,
+  relThumb,
   thumbOf,
   topFromOffset,
 } from './scrollbar';
@@ -137,5 +141,50 @@ describe('트랙 클릭', () => {
 
   it('스크롤할 것이 없으면 아무 쪽도 아니다', () => {
     expect(pageDirection(50, { maxTop: 0, top: 0, rows: 30, trackPx: 300 })).toBe(0);
+  });
+});
+
+/**
+ * 상대 모드 — 대체 화면(claude·vim·less)에는 스크롤백이 없어 "몇 번째 줄"이 없다.
+ * 손잡이 자리는 뜻이 없고, **끈 거리**만 휠 칸 수로 바뀐다.
+ */
+describe('상대 모드', () => {
+  it('손잡이는 고정 길이로 바닥에 선다', () => {
+    const t = relThumb(300);
+    expect(t.visible).toBe(true);
+    expect(t.sizePx).toBe(MIN_THUMB_PX);
+    expect(t.offsetPx).toBe(300 - MIN_THUMB_PX);
+    expect(t.travelPx).toBe(300 - MIN_THUMB_PX);
+  });
+
+  it('트랙이 최소 길이보다 짧아도 넘치지 않는다', () => {
+    const t = relThumb(20);
+    expect(t.sizePx).toBe(20);
+    expect(t.offsetPx).toBe(0);
+  });
+
+  it('아직 배치 전(트랙 0)이면 그리지 않는다', () => {
+    expect(relThumb(0).visible).toBe(false);
+  });
+
+  it('끈 거리를 휠 칸 수로 바꾼다 — 위가 양수, 모자란 만큼은 버린다', () => {
+    expect(relScrollSteps(REL_PX_PER_STEP * 10)).toBe(10);
+    expect(relScrollSteps(-REL_PX_PER_STEP * 3)).toBe(-3);
+    // 한 칸이 안 되면 아직 아무것도 보내지 않는다(0 쪽으로 버린다 — 부호가 뒤집히지 않게).
+    expect(relScrollSteps(REL_PX_PER_STEP - 1)).toBe(0);
+    expect(relScrollSteps(-(REL_PX_PER_STEP - 1))).toBe(0);
+  });
+
+  it('누적 총량이라 되돌려 끌면 그대로 되돌아온다', () => {
+    const up = relScrollSteps(120);
+    expect(relScrollSteps(0)).toBe(0);
+    expect(up - relScrollSteps(60)).toBe(relScrollSteps(60));
+  });
+
+  it('손잡이는 포인터를 따라가되 트랙 밖으로 나가지 않는다', () => {
+    const rest = 300 - MIN_THUMB_PX;
+    expect(relDragOffset(rest, -60, 300)).toBe(rest - 60);
+    expect(relDragOffset(rest, -9999, 300)).toBe(0);
+    expect(relDragOffset(rest, 9999, 300)).toBe(rest);
   });
 });

@@ -966,7 +966,12 @@ button {
 
 .term-scrollbar:hover .term-scrollbar__thumb,
 /* claude·codex 가 도는 창은 늘 또렷하게 — 거기서는 막대가 사실상 유일한 스크롤 수단이다. */
-.term-scrollbar--pinned .term-scrollbar__thumb {
+.term-scrollbar--pinned .term-scrollbar__thumb,
+/*
+ * 대체 화면(claude·vim·less)에서도 또렷하게. 여기서는 손잡이 자리가 어디를 보고 있는지를 뜻하지
+ * 않는다 — 프로그램이 어디를 보는지 터미널은 모른다. 끄는 만큼 휠을 보내는 손잡이라는 뜻이다.
+ */
+.term-scrollbar--relative .term-scrollbar__thumb {
   background: #8a847a;
 }
 
