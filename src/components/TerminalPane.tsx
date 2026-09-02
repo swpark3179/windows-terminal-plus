@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { Base64, ClipboardAddon, type ClipboardSelectionType } from '@xterm/addon-clipboard';
 import { FitAddon } from '@xterm/addon-fit';
@@ -25,6 +25,7 @@ import { appOwnsKey, terminalKeyAction } from '../lib/keys';
 import { registerTerminalClipboard, terminalClipboard } from '../lib/terminalRegistry';
 import { useStore } from '../state/store';
 import type { Pane, PtyExitEvent } from '../state/types';
+import { TerminalScrollbar } from './TerminalScrollbar';
 
 /** 디자인 터미널 색상. */
 const THEME = {
@@ -65,6 +66,8 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  // 스크롤 막대에 넘겨줄 인스턴스. ref 로는 막대가 붙을 때를 알 수 없어 상태로도 들고 있는다.
+  const [terminal, setTerminal] = useState<Terminal | null>(null);
   const refresh = useStore((s) => s.refresh);
 
   // 터미널 수명은 패널 id 에 묶인다. 스냅샷이 갱신돼도 다시 만들지 않는다.
@@ -112,6 +115,7 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
 
     termRef.current = term;
     fitRef.current = fit;
+    setTerminal(term);
 
     const copySelection = async () => {
       const text = normalizeCopyText(term.getSelection());
@@ -265,6 +269,7 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
+      setTerminal(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane.id, sessionId]);
@@ -287,7 +292,6 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
   return (
     <div
       className="term-body"
-      ref={hostRef}
       onMouseDown={(e) => {
         // 편집 모드의 드래그를 방해하지 않도록 선택 조작만 흘려보낸다.
         if (useStore.getState().editMode) {
@@ -301,6 +305,14 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
           terminalClipboard(pane.id)?.paste();
         }
       }}
-    />
+    >
+      {/*
+        xterm 이 자기 DOM 을 붙일 노드에는 리액트 자식을 두지 않는다 — 한 노드를 둘이 만지면
+        서로의 자식을 지운다. 그래서 호스트를 안쪽으로 한 겹 내리고 막대는 형제로 둔다.
+        (FitAddon 은 `.xterm` 의 부모를 재므로 이제 `.term-host` 를 본다.)
+      */}
+      <div className="term-host" ref={hostRef} />
+      {terminal && <TerminalScrollbar term={terminal} ai={pane.ai} />}
+    </div>
   );
 }

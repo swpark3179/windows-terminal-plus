@@ -32,31 +32,11 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: () => Promise.resolve(() => {}
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: () => Promise.resolve(null) }));
 
 // jsdom 에는 캔버스/WebGL 이 없으므로 xterm 은 통째로 스텁으로 바꾼다.
-vi.mock('@xterm/xterm', () => ({
-  Terminal: class {
-    cols = 80;
-    rows = 24;
-    options: Record<string, unknown> = {};
-    unicode = { activeVersion: '6' };
-    buffer = { active: { type: 'normal' } };
-    loadAddon() {}
-    open() {}
-    write() {}
-    dispose() {}
-    attachCustomKeyEventHandler() {}
-    getSelection() {
-      return '';
-    }
-    clearSelection() {}
-    paste() {}
-    onData() {
-      return { dispose() {} };
-    }
-    onBinary() {
-      return { dispose() {} };
-    }
-  },
-}));
+// (스크롤 막대가 쓰는 버퍼·이벤트까지 필요하므로 터미널 테스트와 같은 스텁을 나눠 쓴다.)
+vi.mock('@xterm/xterm', async () => {
+  const { StubTerminal } = await import('./test/xtermStub');
+  return { Terminal: StubTerminal };
+});
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('@xterm/addon-unicode11', () => ({ Unicode11Addon: class {} }));
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
