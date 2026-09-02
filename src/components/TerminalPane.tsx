@@ -154,17 +154,18 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     });
 
     term.attachCustomKeyEventHandler((e) => {
-      // 한글 조합 중에는 아무것도 가로채지 않는다.
-      if (e.isComposing || e.keyCode === 229) return true;
-
       const action = terminalKeyAction(e);
+      // 한글 조합 중에는 클립보드 조합 말고 아무것도 가로채지 않는다. 조합 중인 음절은 아직 PTY 로
+      // 가지 않았을 수 있어, 다른 키를 앞질러 보내면 입력 순서가 뒤집힌다. 복사·붙여넣기는 조합에
+      // 섞이는 조합이 아니고, 클립보드 읽기가 비동기라 사실상 조합이 먼저 끝난다.
+      const clipboard = action === 'copy' || action === 'paste' || action === 'copy-if-selection';
+      if (!clipboard && (e.isComposing || e.keyCode === 229)) return true;
+
       if (action) {
-        const rawCtrlV = action === 'paste' && !e.shiftKey && e.key.toLowerCase() === 'v';
-        const passThrough =
-          // vim·less·tmux 같은 대체 화면에서는 Ctrl+V 가 그 프로그램의 것이다.
-          (rawCtrlV && term.buffer.active.type === 'alternate') ||
-          // 선택이 없으면 Ctrl+C 는 예전처럼 셸로 가 실행 중인 명령을 끊는다.
-          (action === 'copy-if-selection' && term.getSelection().trim() === '');
+        // 선택이 없으면 Ctrl+C 는 예전처럼 셸로 가 실행 중인 명령을 끊는다.
+        // (Ctrl+V 는 대체 화면에서도 붙여넣기다 — claude·codex 가 거기서 돌기 때문이다.
+        //  vim 의 비주얼 블록은 vim 이 안내하는 대로 Ctrl+Q 를 쓴다.)
+        const passThrough = action === 'copy-if-selection' && term.getSelection().trim() === '';
         if (!passThrough) {
           // xterm 의 ^C/^V 전송과 웹뷰 기본 붙여넣기(중복!)를 함께 막는다.
           e.preventDefault();

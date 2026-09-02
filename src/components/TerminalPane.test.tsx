@@ -145,14 +145,29 @@ describe('붙여넣기', () => {
     await waitFor(() => expect(term.pasted).toEqual(['hi']));
   });
 
-  it('대체 화면(vim·less)에서는 Ctrl+V 를 그 프로그램에 넘긴다', () => {
+  it('대체 화면에서도 Ctrl+V 는 붙여넣기다 — claude 는 거기서 돈다', async () => {
+    // 예전에는 vim 의 비주얼 블록을 살리려고 대체 화면에서 Ctrl+V 를 프로그램에 넘겼다. 그런데
+    // 요즘 claude 는 UI 를 대체 화면에 그려서, 정작 붙여넣기가 필요한 자리에서만 안 됐다.
+    // (vim 의 비주얼 블록은 vim 이 스스로 안내하는 Ctrl+Q 로 쓴다.)
+    readMock.mockResolvedValue('hi');
     const { term, press } = mount();
     term.buffer.active.type = 'alternate';
 
-    expect(press({ key: 'v', ctrlKey: true })).toBe(true);
-    expect(readMock).not.toHaveBeenCalled();
-    // Ctrl+Shift+V 는 대체 화면에서도 붙여넣기다.
+    expect(press({ key: 'v', ctrlKey: true })).toBe(false);
+    await waitFor(() => expect(term.pasted).toEqual(['hi']));
+    // Ctrl+Shift+V 도 그대로다.
     expect(press({ key: 'V', ctrlKey: true, shiftKey: true })).toBe(false);
+  });
+
+  it('한글 조합 중에도 Ctrl+V 는 붙여넣는다 — 다른 키는 그대로 넘긴다', async () => {
+    readMock.mockResolvedValue('hi');
+    const { term, press } = mount();
+
+    // 조합 중인 글자는 IME 의 것이다 — 가로채면 그 글자가 죽는다.
+    expect(press({ key: 'Process', keyCode: 229, isComposing: true })).toBe(true);
+    // 클립보드 조합은 조합에 섞이지 않으므로 조합 중에도 가져간다.
+    expect(press({ key: 'v', code: 'KeyV', ctrlKey: true, isComposing: true })).toBe(false);
+    await waitFor(() => expect(term.pasted).toEqual(['hi']));
   });
 
   it('너무 큰 클립보드는 붙여넣지 않는다 — 셸이 굳는다', async () => {
@@ -359,15 +374,83 @@ describe('스크롤 막대', () => {
     expect(term.scrolledLines.length).toBe(before);
   });
 
-  it('대체 화면에서는 막대를 감추고, 빠져나오면 되돌아온다', async () => {
+  /** `term.element` 로 나간 합성 휠을 모은다 — 대체 화면에서 막대가 보내는 것이 이것이다. */
+  function wheelLog(term: { element: HTMLElement }) {
+    const seen: { deltaY: number; deltaMode: number }[] = [];
+    term.element.addEventListener('wheel', (e) => {
+      const w = e as WheelEvent;
+      seen.push({ deltaY: w.deltaY, deltaMode: w.deltaMode });
+    });
+    return seen;
+  }
+
+  /** 대체 화면으로 들어간 창. 손잡이는 바닥에 선다. */
+  async function mountAlternate(pane: Pane = PANE) {
+    const { view, term } = await mountScrolled(8192, pane);
+    term.setBufferType('alternate');
+    await waitFor(() => expect(track(view)).toHaveClass('term-scrollbar--relative'));
+    return { view, term, wheels: wheelLog(term) };
+  }
+
+  /** 상대 모드 손잡이가 쉬는 자리 — 트랙 바닥. */
+  const REST = TRACK_H - MIN_THUMB_PX;
+
+  it('대체 화면에서도 손잡이가 보인다 — claude 가 거기서 돈다', async () => {
     const { view, term } = await mountScrolled(8192);
     await waitFor(() => expect(thumb(view)).toBeTruthy());
 
     term.setBufferType('alternate');
-    await waitFor(() => expect(thumb(view)).toBeNull());
+    await waitFor(() => expect(track(view)).toHaveClass('term-scrollbar--relative'));
+    expect(thumb(view)).toBeTruthy();
+    expect(thumb(view)!.style.top).toBe(`${REST}px`);
 
+    // 일반 버퍼로 나오면 다시 자리를 뜻하는 막대다.
     term.setBufferType('normal');
-    await waitFor(() => expect(thumb(view)).toBeTruthy());
+    await waitFor(() => expect(track(view)).not.toHaveClass('term-scrollbar--relative'));
+    expect(thumb(view)).toBeTruthy();
+  });
+
+  it('대체 화면에서 끌면 끈 거리만큼 휠을 보낸다 — 스크롤백이 없어 그것만이 길이다', async () => {
+    const { view, wheels } = await mountAlternate();
+    const start = TRACK_TOP + REST;
+
+    fireEvent.mouseDown(thumb(view)!, { button: 0, clientY: start });
+    // 60px 위로 = 휠 10줄 위로. deltaY 는 xterm 규약대로 음수가 위다.
+    fireEvent.mouseMove(window, { clientY: start - 60 });
+    expect(wheels).toEqual([{ deltaY: -10, deltaMode: 1 }]);
+    // 이어서 6px 더 끌면 남은 한 줄만 더 간다 — 총량과의 차이만 보내므로 겹치지 않는다.
+    fireEvent.mouseMove(window, { clientY: start - 66 });
+    expect(wheels.at(-1)).toEqual({ deltaY: -1, deltaMode: 1 });
+    // 손잡이는 포인터를 따라간다.
+    expect(thumb(view)!.style.top).toBe(`${REST - 66}px`);
+
+    // 되돌려 끌면 보낸 것도 그대로 되돌아간다.
+    fireEvent.mouseMove(window, { clientY: start });
+    expect(wheels.at(-1)).toEqual({ deltaY: 11, deltaMode: 1 });
+
+    // 놓으면 자리가 뜻이 없으므로 바닥으로 돌아간다.
+    fireEvent.mouseUp(window);
+    await nextFrame();
+    expect(thumb(view)!.style.top).toBe(`${REST}px`);
+  });
+
+  it('대체 화면에서 트랙 빈 곳을 누르면 한 화면씩 — 페이지 모드로 한 번만 보낸다', async () => {
+    const { view, wheels } = await mountAlternate();
+
+    fireEvent.mouseDown(track(view), { button: 0, clientY: TRACK_TOP + 10 });
+    expect(wheels).toEqual([{ deltaY: -1, deltaMode: 2 }]);
+  });
+
+  it('대체 화면에서는 막대 위 휠도 프로그램으로 간다 — Ctrl+휠 은 확대라 그대로 흘린다', async () => {
+    const { view, term, wheels } = await mountAlternate();
+
+    fireEvent.wheel(track(view), { deltaY: 120 });
+    expect(wheels).toEqual([{ deltaY: 3, deltaMode: 1 }]);
+    // 대체 화면에는 스크롤백이 없다 — xterm 을 굴려 봐야 아무 일도 안 일어난다.
+    expect(term.scrolledLines).toEqual([]);
+
+    fireEvent.wheel(track(view), { deltaY: 120, ctrlKey: true });
+    expect(wheels).toHaveLength(1);
   });
 
   it('claude 가 도는 창은 막대를 늘 또렷하게 둔다', async () => {

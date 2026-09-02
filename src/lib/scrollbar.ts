@@ -94,11 +94,57 @@ export function dragStep(pointerPx: number, grabPx: number, m: BarMetrics): Drag
   return { offsetPx, top: topFromOffset(offsetPx, m) };
 }
 
-/** 트랙 빈 곳을 눌렀을 때 어느 쪽으로 한 화면 갈지. 손잡이 위를 눌렀으면 0. */
-export function pageDirection(pointerPx: number, m: BarMetrics): -1 | 0 | 1 {
-  const t = thumbOf(m);
+/** 손잡이를 기준으로 트랙의 어느 쪽을 눌렀는지. 손잡이 위면 0. */
+export function sideOf(pointerPx: number, t: Thumb): -1 | 0 | 1 {
   if (!t.visible) return 0;
   if (pointerPx < t.offsetPx) return -1;
   if (pointerPx >= t.offsetPx + t.sizePx) return 1;
   return 0;
+}
+
+/** 트랙 빈 곳을 눌렀을 때 어느 쪽으로 한 화면 갈지. 손잡이 위를 눌렀으면 0. */
+export function pageDirection(pointerPx: number, m: BarMetrics): -1 | 0 | 1 {
+  return sideOf(pointerPx, thumbOf(m));
+}
+
+/* ── 상대 모드 ─────────────────────────────────────────────
+ *
+ * 대체 화면에는 스크롤백이 없어서 "지금 몇 번째 줄"이라는 것이 없다 — 화면을 넘기는 것은 프로그램
+ * 자신이고, 그 프로그램이 어디를 보고 있는지 터미널은 모른다. 그래서 손잡이의 **자리는 뜻이 없다.**
+ * 길이를 고정해 바닥에 세워 두고(대체 화면 프로그램은 늘 최신 내용을 바닥에 둔다), 끄는 동안에는
+ * 포인터를 따라가되 움직인 **거리**만 휠 칸 수로 바꿔 프로그램에 보낸다.
+ */
+
+/** 상대 모드에서 휠 한 줄에 해당하는, 끄는 거리(px). */
+export const REL_PX_PER_STEP = 6;
+
+/** 상대 모드 손잡이 — 고정 길이로 트랙 바닥에 쉰다. */
+export function relThumb(trackPx: number, minThumbPx?: number): Thumb {
+  const track = Math.max(0, Math.floor(trackPx));
+  if (track === 0) return { visible: false, sizePx: 0, offsetPx: 0, travelPx: 0 };
+  const sizePx = Math.min(minThumbPx ?? MIN_THUMB_PX, track);
+  const travelPx = track - sizePx;
+  return { visible: true, sizePx, offsetPx: travelPx, travelPx };
+}
+
+/**
+ * 시작점에서 `movedPx`(위가 양수) 만큼 끌었을 때 **지금까지** 보내야 할 총 줄 수.
+ *
+ * 누적 총량이라 호출부는 이미 보낸 만큼과의 차이만 보내면 된다 — 프레임을 몇 번에 나눠 받든
+ * 결과가 같고(드리프트 없음), 되돌려 끌면 보낸 것도 그대로 되돌아간다.
+ */
+export function relScrollSteps(movedPx: number, pxPerStep?: number): number {
+  const step = Math.max(1, pxPerStep ?? REL_PX_PER_STEP);
+  // `|| 0` 은 -0 을 0 으로 눕힌다 — 부호만 다른 0 이 비교에서 튀지 않게.
+  return Math.trunc(movedPx / step) || 0;
+}
+
+/** 상대 모드에서 끄는 동안 손잡이가 놓일 자리 — 포인터를 따라가되 트랙 밖으로는 안 나간다. */
+export function relDragOffset(
+  startOffsetPx: number,
+  deltaPx: number,
+  trackPx: number,
+  minThumbPx?: number,
+): number {
+  return clamp(startOffsetPx + deltaPx, 0, relThumb(trackPx, minThumbPx).travelPx);
 }

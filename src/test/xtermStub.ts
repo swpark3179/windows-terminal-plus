@@ -25,6 +25,8 @@ export class StubTerminal {
   rows = 24;
   options: Record<string, unknown> = {};
   unicode = { activeVersion: '6' };
+  /** 합성 휠이 향하는 곳 — 실제 xterm 도 `.xterm` 에 휠 처리기를 걸어 둔다. */
+  element: HTMLDivElement = document.createElement('div');
 
   private _render = emitter<{ start: number; end: number }>();
   private _scroll = emitter<number>();
