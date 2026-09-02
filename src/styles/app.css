@@ -56,6 +56,16 @@
   /* 어두운 제목줄에서 켜진 상태를 알리는 색 — 터미널 커서와 같은 톤. */
   --term-accent: #d99b74;
 
+  /*
+   * 터미널 스크롤 막대 — xterm 이 자리를 잡아 두는 진짜 스크롤바 폭, 우리가 그 위에 그리는
+   * 막대 폭, 그리고 터미널 여백을 한 값으로 묶는다. 셋이 어긋나면 글자가 막대 밑으로 들어간다.
+   */
+  --term-bar: 14px;
+  --term-pad-t: 6px;
+  --term-pad-r: 4px;
+  --term-pad-b: 4px;
+  --term-pad-l: 8px;
+
   --mono: 'Noto Sans Mono', 'Noto Sans KR', ui-monospace, monospace;
   --sans: 'Roboto', 'Noto Sans KR', system-ui, -apple-system, sans-serif;
 }
@@ -114,15 +124,21 @@ button {
 }
 
 ::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+/*
+ * `::-webkit-scrollbar` 를 선언하는 순간 크로미움은 "직접 그리는" 스크롤바로 바꾸고 손잡이
+ * 최소 길이를 우리에게 맡긴다. 정해 주지 않으면 내용이 길어질수록 0 까지 줄어 점이 된다.
+ */
 ::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 9px;
+  min-height: 32px;
+  min-width: 32px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #c6c1b2;
@@ -879,9 +895,16 @@ button {
 .term-body {
   flex: 1;
   min-height: 0;
+  /* 스크롤 막대가 이 상자를 기준으로 앉는다. */
+  position: relative;
   background: var(--term-bg);
-  padding: 6px 4px 4px 8px;
+  padding: var(--term-pad-t) var(--term-pad-r) var(--term-pad-b) var(--term-pad-l);
   overflow: hidden;
+}
+
+/* xterm 이 자기 DOM 을 붙이는 노드. 막대와 한 노드를 다투지 않도록 따로 둔다. */
+.term-host {
+  height: 100%;
 }
 
 .term-body .xterm {
@@ -890,6 +913,66 @@ button {
 
 .term-body .xterm-viewport {
   background: transparent !important;
+}
+
+/*
+ * xterm 의 진짜 스크롤바는 **자리만** 잡고 보이지 않게 둔다.
+ *
+ * 폭을 0 으로 지우면 안 된다. FitAddon 이 글자 폭에서 빼는 값은 Viewport 가 생성자에서 한 번
+ * 잰 `offsetWidth 차이 || 15` 라서(xterm 5.5), 숨기면 오히려 15px 를 빼 우리 막대와 어긋난다.
+ * 폭을 우리 막대와 같게 두면 마지막 칸이 막대 밑으로 들어가지 않는 것이 저절로 보장된다.
+ */
+.term-body .xterm-viewport::-webkit-scrollbar {
+  width: var(--term-bar);
+}
+.term-body .xterm-viewport::-webkit-scrollbar-track,
+.term-body .xterm-viewport::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+/* 앱이 직접 그리는 터미널 스크롤 막대 (`TerminalScrollbar.tsx`). */
+.term-scrollbar {
+  position: absolute;
+  top: var(--term-pad-t);
+  right: var(--term-pad-r);
+  bottom: var(--term-pad-b);
+  width: var(--term-bar);
+  /* `.xterm` 안쪽 오버뷰 룰러(z-index 8)보다 위에. */
+  z-index: 10;
+  cursor: default;
+  user-select: none;
+}
+
+/* 스크롤할 것이 없거나 대체 화면이면 자리만 남기고 사라진다. */
+.term-scrollbar--off {
+  pointer-events: none;
+}
+
+.term-scrollbar__thumb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  border-radius: 7px;
+  background: #5d584f;
+  /*
+   * 보이는 두께는 8px 이지만 잡는 자리는 14px 전부다 — 투명 테두리로 넓힌다.
+   * (`* { box-sizing: border-box }` 라 길이 계산에 테두리가 이미 들어 있다.)
+   */
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.12s ease;
+}
+
+.term-scrollbar:hover .term-scrollbar__thumb,
+/* claude·codex 가 도는 창은 늘 또렷하게 — 거기서는 막대가 사실상 유일한 스크롤 수단이다. */
+.term-scrollbar--pinned .term-scrollbar__thumb {
+  background: #8a847a;
+}
+
+.term-scrollbar--dragging .term-scrollbar__thumb,
+.term-scrollbar--dragging:hover .term-scrollbar__thumb {
+  background: var(--term-accent);
 }
 
 /* 리치 텍스트 에디터 */

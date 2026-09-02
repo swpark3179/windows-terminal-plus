@@ -197,8 +197,16 @@ export function App() {
   }, []);
 
   // ── 주기적 스냅샷 ─────────────────────────────────
+  //
+  // flush 는 저장만 하는 게 아니라 창마다 돌고 있는 AI(`pane.ai`)를 다시 훑는 유일한 자리이기도
+  // 하다(`state.rs` 의 `capture_ai`). 저장만 하고 끝내면 그 결과가 화면까지 오지 않아
+  // 사이드바 표시도, 스크롤 막대의 claude·codex 처리도 다음 조작 때까지 미뤄진다.
   useEffect(() => {
-    const timer = setInterval(() => void flushSnapshot().catch(() => {}), FLUSH_INTERVAL_MS);
+    const timer = setInterval(() => {
+      void flushSnapshot()
+        .then(() => useStore.getState().refresh())
+        .catch(() => {});
+    }, FLUSH_INTERVAL_MS);
     return () => clearInterval(timer);
   }, []);
 
