@@ -35,6 +35,7 @@ import { backend } from '../test/backend';
 import { lastTerminal, resetTerminalStub } from '../test/xtermStub';
 import { MAX_PASTE_CHARS } from '../lib/clipboard';
 import { MIN_THUMB_PX } from '../lib/scrollbar';
+import { WHEEL_CAP_PER_FRAME } from '../lib/termWheel';
 import { terminalClipboard } from '../lib/terminalRegistry';
 import type { Pane } from '../state/types';
 
@@ -384,15 +385,25 @@ describe('스크롤 막대', () => {
     return seen;
   }
 
-  /** 대체 화면으로 들어간 창. 손잡이는 바닥에 선다. */
-  async function mountAlternate(pane: Pane = PANE) {
+  /**
+   * 대체 화면으로 들어간 창. 손잡이는 바닥에 선다.
+   *
+   * `mode` 로 마우스 보고를 고른다. 이 값이 갈리는 지점이 중요하다 — 꺼져 있으면(화살표 경로)
+   * 한 이벤트에 크기를 실어 한 번만 보내고, 켜져 있으면 SGR 보고에 크기가 실리지 않아 칸마다
+   * 한 번씩 보낸다. `claude`·`codex` 는 켜는 쪽이다.
+   */
+  async function mountAlternate(pane: Pane = PANE, mode: 'none' | 'vt200' = 'none') {
     const { view, term } = await mountScrolled(8192, pane);
+    term.modes.mouseTrackingMode = mode;
     term.setBufferType('alternate');
     await waitFor(() => expect(track(view)).toHaveClass('term-scrollbar--relative'));
     return { view, term, wheels: wheelLog(term) };
   }
 
-  /** 상대 모드 손잡이가 쉬는 자리 — 트랙 바닥. */
+  /** 보낸 휠의 총합. 위가 음수라 왕복하면 0 이 되어야 한다. */
+  const sum = (ws: { deltaY: number }[]) => ws.reduce((a, w) => a + w.deltaY, 0);
+
+  /** 가상 모드 손잡이가 **바닥에서** 쉬는 자리. 위로 올라가면 여기서 떠난다. */
   const REST = TRACK_H - MIN_THUMB_PX;
 
   it('대체 화면에서도 손잡이가 보인다 — claude 가 거기서 돈다', async () => {
@@ -415,30 +426,122 @@ describe('스크롤 막대', () => {
     const start = TRACK_TOP + REST;
 
     fireEvent.mouseDown(thumb(view)!, { button: 0, clientY: start });
-    // 60px 위로 = 휠 10줄 위로. deltaY 는 xterm 규약대로 음수가 위다.
+    // 60px 위로 = 휠 10칸 위로(처음 이득이 6px = 한 칸이다). deltaY 는 xterm 규약대로 음수가 위다.
     fireEvent.mouseMove(window, { clientY: start - 60 });
     expect(wheels).toEqual([{ deltaY: -10, deltaMode: 1 }]);
-    // 이어서 6px 더 끌면 남은 한 줄만 더 간다 — 총량과의 차이만 보내므로 겹치지 않는다.
+    // 이어서 6px 더 끌면 남은 한 칸만 더 간다 — 총량과의 차이만 보내므로 겹치지 않는다.
     fireEvent.mouseMove(window, { clientY: start - 66 });
     expect(wheels.at(-1)).toEqual({ deltaY: -1, deltaMode: 1 });
-    // 손잡이는 포인터를 따라간다.
+    // 손잡이는 포인터에 붙는다.
     expect(thumb(view)!.style.top).toBe(`${REST - 66}px`);
 
-    // 되돌려 끌면 보낸 것도 그대로 되돌아간다.
+    // 되돌려 끌면 보낸 것도 그대로 되돌아간다 — 이득이 제스처 안에서 고정이라 왕복 합이 0 이다.
     fireEvent.mouseMove(window, { clientY: start });
     expect(wheels.at(-1)).toEqual({ deltaY: 11, deltaMode: 1 });
+    expect(sum(wheels)).toBe(0);
 
-    // 놓으면 자리가 뜻이 없으므로 바닥으로 돌아간다.
     fireEvent.mouseUp(window);
     await nextFrame();
     expect(thumb(view)!.style.top).toBe(`${REST}px`);
   });
 
-  it('대체 화면에서 트랙 빈 곳을 누르면 한 화면씩 — 페이지 모드로 한 번만 보낸다', async () => {
+  it('놓아도 손잡이가 제자리에 있는다 — 바닥으로 튀지 않는다', async () => {
+    const { view, term } = await mountAlternate();
+    const start = TRACK_TOP + REST;
+
+    fireEvent.mouseDown(thumb(view)!, { button: 0, clientY: start });
+    fireEvent.mouseMove(window, { clientY: start - 66 });
+    const held = thumb(view)!.style.top;
+    expect(held).toBe(`${REST - 66}px`);
+
+    fireEvent.mouseUp(window);
+    await nextFrame();
+    expect(thumb(view)!.style.top).toBe(held);
+
+    // 프로그램이 화면을 다시 그려도 지킨다 — claude 는 답하는 내내 다시 그린다.
+    act(() => term.emitRender());
+    await nextFrame();
+    expect(thumb(view)!.style.top).toBe(held);
+  });
+
+  it('다시 끌면 놓아 둔 자리에서 이어진다', async () => {
     const { view, wheels } = await mountAlternate();
+    const first = TRACK_TOP + REST;
+
+    fireEvent.mouseDown(thumb(view)!, { button: 0, clientY: first });
+    fireEvent.mouseMove(window, { clientY: first - 60 });
+    fireEvent.mouseUp(window);
+    await nextFrame();
+    expect(thumb(view)!.style.top).toBe(`${REST - 60}px`);
+
+    const second = TRACK_TOP + REST - 60;
+    fireEvent.mouseDown(thumb(view)!, { button: 0, clientY: second });
+    fireEvent.mouseMove(window, { clientY: second - 60 });
+    // 앞서 올린 10칸 위로 10칸 더. 자리도 이어진다.
+    expect(sum(wheels)).toBe(-20);
+    expect(thumb(view)!.style.top).toBe(`${REST - 120}px`);
+  });
+
+  it('바닥까지 끌어내리면 한 화면치를 더 보내 진짜 바닥임을 확정한다', async () => {
+    const { view, term, wheels } = await mountAlternate(PANE, 'vt200');
+    const start = TRACK_TOP + REST;
+
+    fireEvent.mouseDown(thumb(view)!, { button: 0, clientY: start });
+    fireEvent.mouseMove(window, { clientY: start - 60 });
+    fireEvent.mouseUp(window);
+    await nextFrame();
+    expect(sum(wheels)).toBe(-10);
+
+    const from = TRACK_TOP + parseFloat(thumb(view)!.style.top);
+    fireEvent.mouseDown(thumb(view)!, { button: 0, clientY: from });
+    fireEvent.mouseMove(window, { clientY: from + 999 });
+    fireEvent.mouseUp(window);
+    await nextFrame();
+    await nextFrame();
+
+    // 올린 것을 되돌리고, 그 위에 한 화면을 더 내려 보냈다 — 우리가 적게 세고 있었어도 바닥에 닿는다.
+    expect(sum(wheels)).toBe(term.rows);
+    expect(thumb(view)!.style.top).toBe(`${REST}px`);
+  });
+
+  it('화살표 경로에서는 바닥에서 더 보내지 않는다 — 그 휠은 ↓ 키가 된다', async () => {
+    const { view, wheels } = await mountAlternate();
+    const start = TRACK_TOP + REST;
+
+    fireEvent.mouseDown(thumb(view)!, { button: 0, clientY: start });
+    fireEvent.mouseMove(window, { clientY: start - 60 });
+    fireEvent.mouseUp(window);
+    await nextFrame();
+
+    const from = TRACK_TOP + parseFloat(thumb(view)!.style.top);
+    fireEvent.mouseDown(thumb(view)!, { button: 0, clientY: from });
+    fireEvent.mouseMove(window, { clientY: from + 999 });
+    fireEvent.mouseUp(window);
+    await nextFrame();
+    await nextFrame();
+
+    // claude 의 입력창에서는 히스토리 탐색, fzf 에서는 선택 이동이 된다 — 한 칸도 더 보내지 않는다.
+    expect(sum(wheels)).toBe(0);
+    expect(thumb(view)!.style.top).toBe(`${REST}px`);
+  });
+
+  it('대체 화면에서 트랙 빈 곳을 누르면 한 화면씩 — 화살표 경로는 한 번에', async () => {
+    const { view, term, wheels } = await mountAlternate();
 
     fireEvent.mouseDown(track(view), { button: 0, clientY: TRACK_TOP + 10 });
-    expect(wheels).toEqual([{ deltaY: -1, deltaMode: 2 }]);
+    expect(wheels).toEqual([{ deltaY: -term.rows, deltaMode: 1 }]);
+    expect(parseFloat(thumb(view)!.style.top)).toBeLessThan(REST);
+  });
+
+  it('보고 경로에서는 한 화면을 칸마다 나눠 보낸다 — SGR 보고에는 크기가 실리지 않는다', async () => {
+    const { view, term, wheels } = await mountAlternate(PANE, 'vt200');
+
+    fireEvent.mouseDown(track(view), { button: 0, clientY: TRACK_TOP + 10 });
+    // 프레임당 상한까지만 내보내고 나머지는 다음 프레임으로 — 칸마다 `writePty` 가 한 번이다.
+    expect(wheels).toHaveLength(WHEEL_CAP_PER_FRAME);
+    await nextFrame();
+    expect(wheels).toHaveLength(term.rows);
+    expect(wheels.every((w) => w.deltaY === -1 && w.deltaMode === 1)).toBe(true);
   });
 
   it('대체 화면에서는 막대 위 휠도 프로그램으로 간다 — Ctrl+휠 은 확대라 그대로 흘린다', async () => {
@@ -451,6 +554,49 @@ describe('스크롤 막대', () => {
 
     fireEvent.wheel(track(view), { deltaY: 120, ctrlKey: true });
     expect(wheels).toHaveLength(1);
+
+    // 위로 굴리면 손잡이도 따라 올라간다. 3칸만큼이다 — 우리가 보낸 휠을 본문 감시자가
+    // 다시 세면 6칸이 되어 자리가 어긋난다.
+    fireEvent.wheel(track(view), { deltaY: -120 });
+    await nextFrame();
+    expect(thumb(view)!.style.top).toBe('146px');
+  });
+
+  it('본문에서 굴린 진짜 휠도 손잡이에 접힌다 — 안 그러면 막대가 거짓말을 한다', async () => {
+    const { view, term } = await mountAlternate();
+    expect(thumb(view)!.style.top).toBe(`${REST}px`);
+
+    fireEvent.wheel(term.element, { deltaY: -5, deltaMode: 1 });
+    await nextFrame();
+    expect(parseFloat(thumb(view)!.style.top)).toBeLessThan(REST);
+  });
+
+  it('대체 화면을 드나들면 추정치가 초기화된다 — 다른 프로그램의 자리다', async () => {
+    const { view, term } = await mountAlternate();
+
+    fireEvent.wheel(track(view), { deltaY: -120 });
+    await nextFrame();
+    expect(thumb(view)!.style.top).not.toBe(`${REST}px`);
+
+    term.setBufferType('normal');
+    await waitFor(() => expect(track(view)).not.toHaveClass('term-scrollbar--relative'));
+    term.setBufferType('alternate');
+    await waitFor(() => expect(track(view)).toHaveClass('term-scrollbar--relative'));
+    await nextFrame();
+    expect(thumb(view)!.style.top).toBe(`${REST}px`);
+  });
+
+  it('마우스 보고가 켜지고 꺼지면 추정치를 다시 배운다 — 한 칸이 뜻하는 줄이 달라진다', async () => {
+    const { view, term } = await mountAlternate();
+
+    fireEvent.wheel(track(view), { deltaY: -120 });
+    await nextFrame();
+    expect(thumb(view)!.style.top).not.toBe(`${REST}px`);
+
+    term.modes.mouseTrackingMode = 'vt200';
+    act(() => term.emitRender());
+    await nextFrame();
+    expect(thumb(view)!.style.top).toBe(`${REST}px`);
   });
 
   it('claude 가 도는 창은 막대를 늘 또렷하게 둔다', async () => {

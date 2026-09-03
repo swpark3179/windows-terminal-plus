@@ -25,6 +25,11 @@ export class StubTerminal {
   rows = 24;
   options: Record<string, unknown> = {};
   unicode = { activeVersion: '6' };
+  /**
+   * 마우스 보고 상태. **무조건** 있어야 한다 — 막대가 매 프레임 읽는 값이라 없으면 이 파일의
+   * 다른 스위트(클립보드 등)까지 같이 죽는다. 테스트가 직접 바꿔 보고 경로를 재현한다.
+   */
+  modes = { mouseTrackingMode: 'none' as 'none' | 'x10' | 'vt200' | 'drag' | 'any' };
   /** 합성 휠이 향하는 곳 — 실제 xterm 도 `.xterm` 에 휠 처리기를 걸어 둔다. */
   element: HTMLDivElement = document.createElement('div');
 
@@ -122,6 +127,14 @@ export class StubTerminal {
   emitScroll(viewportY: number, baseY = this.buffer.active.baseY) {
     this.buffer.active.viewportY = viewportY;
     this.buffer.active.baseY = baseY;
+    this._render.fire({ start: 0, end: this.rows - 1 });
+  }
+
+  /**
+   * 렌더만 알린다. `emitScroll` 은 `viewportY`·`baseY` 를 함께 바꾸는데 대체 화면에서 그 값들은
+   * 뜻이 없어, 거기서는 이쪽을 써야 거짓을 검사하지 않는다.
+   */
+  emitRender() {
     this._render.fire({ start: 0, end: this.rows - 1 });
   }
 
