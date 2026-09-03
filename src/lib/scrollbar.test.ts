@@ -11,14 +11,20 @@ import { describe, expect, it } from 'vitest';
 import {
   MIN_THUMB_PX,
   REL_PX_PER_STEP,
+  SPAN_HEAD_FRACTION,
+  SPAN_MAX,
   type BarMetrics,
+  type VirtualMetrics,
+  clampSpan,
   dragStep,
+  growSpan,
   pageDirection,
-  relDragOffset,
-  relScrollSteps,
-  relThumb,
+  spanFloor,
   thumbOf,
   topFromOffset,
+  virtualGain,
+  virtualTarget,
+  virtualThumb,
 } from './scrollbar';
 
 /** claude 가 한참 답한 뒤의 흔한 모양 — 스크롤백은 가득 찼고 창은 30줄이다. */
@@ -145,46 +151,143 @@ describe('트랙 클릭', () => {
 });
 
 /**
- * 상대 모드 — 대체 화면(claude·vim·less)에는 스크롤백이 없어 "몇 번째 줄"이 없다.
- * 손잡이 자리는 뜻이 없고, **끈 거리**만 휠 칸 수로 바뀐다.
+ * 가상 뷰포트 — 대체 화면(claude·codex·vim·less)에는 스크롤백이 없어 "몇 번째 줄"이 없다.
+ * 그래서 보낸 휠 칸을 세어 자리를 **추정**한다.
+ *
+ * 이 블록이 지키려는 주장은 셋이다.
+ *
+ * 1. **손잡이가 포인터에 붙는다.** 이득을 고정하면 사상이 `offsetPx = 시작자리 - 끈거리` 로
+ *    펴진다 — 그래서 놓아도 자리가 튀지 않는다(예전 상대 모드가 바닥으로 되돌아가던 자리).
+ * 2. **되돌려 끌면 그대로 되돌아온다.** 보낼 칸 수가 끈 거리의 순수 함수다.
+ * 3. **꼭대기에 닿지 않는다.** 위쪽 끝은 알 수 없으므로 축척이 늘 여유를 남긴다.
  */
-describe('상대 모드', () => {
-  it('손잡이는 고정 길이로 바닥에 선다', () => {
-    const t = relThumb(300);
+const V: VirtualMetrics = { rows: 30, trackPx: 300 };
+/** 트랙 300px · 손잡이 36px → 움직일 거리 264px, 축척 하한 44칸(= 264/6). */
+const V_TRAVEL = 300 - MIN_THUMB_PX;
+
+describe('가상 뷰포트 — 축척', () => {
+  it('하한은 한 화면과 travel/6 중 큰 쪽이다 — 예전 손맛(6px = 한 칸)이 여기서 온다', () => {
+    expect(spanFloor(V)).toBe(V_TRAVEL / REL_PX_PER_STEP);
+    // 줄이 아주 많은 창에서는 트랙을 다 훑어 적어도 한 화면은 가야 한다.
+    expect(spanFloor({ ...V, rows: 120 })).toBe(120);
+  });
+
+  it('올라간 만큼 넓어지고 줄지는 않는다', () => {
+    const floor = spanFloor(V);
+    expect(growSpan(floor, 0, V)).toBe(floor);
+    // 여유 안에 들어오면 그대로다.
+    expect(growSpan(floor, floor * SPAN_HEAD_FRACTION, V)).toBe(floor);
+    const grown = growSpan(floor, 40, V);
+    expect(grown).toBeGreaterThan(floor);
+    // 내려와도 좁아지지 않는다 — 한 번 겪은 넓이는 기억한다.
+    expect(growSpan(grown, 0, V)).toBe(grown);
+  });
+
+  it('하한 아래로도 상한 위로도 나가지 않는다', () => {
+    expect(clampSpan(1, V)).toBe(spanFloor(V));
+    expect(clampSpan(Number.NaN, V)).toBe(spanFloor(V));
+    expect(growSpan(spanFloor(V), 99999, V)).toBe(SPAN_MAX);
+  });
+});
+
+describe('가상 뷰포트 — 손잡이', () => {
+  it('길이는 고정이고 바닥에서는 트랙 아래에 선다', () => {
+    const t = virtualThumb(0, spanFloor(V), V);
     expect(t.visible).toBe(true);
     expect(t.sizePx).toBe(MIN_THUMB_PX);
-    expect(t.offsetPx).toBe(300 - MIN_THUMB_PX);
-    expect(t.travelPx).toBe(300 - MIN_THUMB_PX);
+    expect(t.offsetPx).toBe(V_TRAVEL);
+    expect(t.travelPx).toBe(V_TRAVEL);
+  });
+
+  it('축척이 자라도 길이는 그대로다 — 손 안에서 커졌다 작아지면 안 된다', () => {
+    for (const span of [44, 100, 1000]) {
+      expect(virtualThumb(10, span, V).sizePx).toBe(MIN_THUMB_PX);
+    }
   });
 
   it('트랙이 최소 길이보다 짧아도 넘치지 않는다', () => {
-    const t = relThumb(20);
+    const t = virtualThumb(0, 44, { ...V, trackPx: 20 });
     expect(t.sizePx).toBe(20);
     expect(t.offsetPx).toBe(0);
   });
 
   it('아직 배치 전(트랙 0)이면 그리지 않는다', () => {
-    expect(relThumb(0).visible).toBe(false);
+    expect(virtualThumb(0, 44, { ...V, trackPx: 0 }).visible).toBe(false);
   });
 
-  it('끈 거리를 휠 칸 수로 바꾼다 — 위가 양수, 모자란 만큼은 버린다', () => {
-    expect(relScrollSteps(REL_PX_PER_STEP * 10)).toBe(10);
-    expect(relScrollSteps(-REL_PX_PER_STEP * 3)).toBe(-3);
-    // 한 칸이 안 되면 아직 아무것도 보내지 않는다(0 쪽으로 버린다 — 부호가 뒤집히지 않게).
-    expect(relScrollSteps(REL_PX_PER_STEP - 1)).toBe(0);
-    expect(relScrollSteps(-(REL_PX_PER_STEP - 1))).toBe(0);
+  it('올라갈수록 위로 간다 — 단조', () => {
+    let span = spanFloor(V);
+    let prev = V_TRAVEL + 1;
+    for (const pos of [0, 5, 20, 44, 200, 900]) {
+      span = growSpan(span, pos, V);
+      const offset = virtualThumb(pos, span, V).offsetPx;
+      expect(offset).toBeLessThanOrEqual(prev);
+      prev = offset;
+    }
   });
 
-  it('누적 총량이라 되돌려 끌면 그대로 되돌아온다', () => {
-    const up = relScrollSteps(120);
-    expect(relScrollSteps(0)).toBe(0);
-    expect(up - relScrollSteps(60)).toBe(relScrollSteps(60));
+  it('꼭대기에는 닿지 않는다 — 위쪽 끝을 모르므로 축척이 여유를 남긴다', () => {
+    let span = spanFloor(V);
+    for (const pos of [44, 200, 700]) {
+      span = growSpan(span, pos, V);
+      expect(virtualThumb(pos, span, V).offsetPx).toBeGreaterThan(0);
+    }
   });
 
-  it('손잡이는 포인터를 따라가되 트랙 밖으로 나가지 않는다', () => {
-    const rest = 300 - MIN_THUMB_PX;
-    expect(relDragOffset(rest, -60, 300)).toBe(rest - 60);
-    expect(relDragOffset(rest, -9999, 300)).toBe(0);
-    expect(relDragOffset(rest, 9999, 300)).toBe(rest);
+  it('축척 상한을 넘어서면 꼭대기에 머문다 — 더는 담을 수 없다는 뜻이다', () => {
+    const span = growSpan(spanFloor(V), 99999, V);
+    expect(virtualThumb(99999, span, V).offsetPx).toBe(0);
+  });
+});
+
+describe('가상 뷰포트 — 드래그', () => {
+  const span = spanFloor(V);
+  const gain = virtualGain(span, V);
+
+  it('손잡이가 포인터에 정확히 붙는다 — 이득이 고정이면 사상이 그렇게 펴진다', () => {
+    for (const pos0 of [0, 5, 20]) {
+      const startPx = virtualThumb(pos0, span, V).offsetPx;
+      for (const moved of [0, 12, 60, 120]) {
+        const pos = virtualTarget(pos0, moved, gain);
+        // 여유 구간(고무줄)에 들어가면 더 이상 1:1 이 아니다 — 거기는 별도 주장이다.
+        if (growSpan(span, pos, V) !== span) continue;
+        expect(virtualThumb(pos, span, V).offsetPx).toBe(startPx - moved);
+      }
+    }
+  });
+
+  it('되돌려 끌면 그대로 되돌아온다 — 보낼 칸 수가 끈 거리의 순수 함수다', () => {
+    const pos0 = 20;
+    expect(virtualTarget(pos0, 0, gain)).toBe(pos0);
+    const up = virtualTarget(pos0, 60, gain) - pos0;
+    const down = pos0 - virtualTarget(pos0, -60, gain);
+    expect(up).toBeCloseTo(down);
+    // 왕복 합이 0 이다.
+    expect(virtualTarget(virtualTarget(pos0, 60, gain), -60, gain)).toBeCloseTo(pos0);
+  });
+
+  it('바닥 아래로는 내려가지 않는다', () => {
+    expect(virtualTarget(5, -9999, gain)).toBe(0);
+    expect(virtualTarget(0, -1, gain)).toBe(0);
+  });
+
+  it('겪어 보지 못한 구간에서는 손잡이가 "여기가 끝자락" 자리에 머문다', () => {
+    // 축척이 `pos` 를 따라 자라므로 비율이 고정된다 — 손잡이가 트랙 위쪽 1/4 지점에 선다.
+    // 1:1 이라면 벌써 꼭대기를 지나쳤을 거리인데도 닿지 않는다: 위쪽 끝을 모르기 때문이다.
+    const frontier = Math.round(V_TRAVEL * (1 - SPAN_HEAD_FRACTION));
+    let live = span;
+    for (const moved of [V_TRAVEL, V_TRAVEL * 2, V_TRAVEL * 4]) {
+      const pos = virtualTarget(0, moved, gain);
+      live = growSpan(live, pos, V);
+      const offset = virtualThumb(pos, live, V).offsetPx;
+      expect(offset).toBeGreaterThan(0);
+      // 축척을 정수로 두는 탓에 1px 안에서 흔들린다.
+      expect(Math.abs(offset - frontier)).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it('옮길 데가 없으면 (트랙이 손잡이보다 짧으면) 이득이 0 이다', () => {
+    expect(virtualGain(44, { ...V, trackPx: 20 })).toBe(0);
+    expect(virtualTarget(7, 500, 0)).toBe(7);
   });
 });
