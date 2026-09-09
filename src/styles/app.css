@@ -16,9 +16,22 @@
 @import '@fontsource/noto-sans-kr/700.css';
 @import '@fontsource/noto-sans-mono/400.css';
 @import '@fontsource/noto-sans-mono/500.css';
+/*
+ * 터미널 본문 글꼴은 윈도우 터미널의 기본값인 Cascadia Mono 를 그대로 쓴다.
+ * 시스템에 깔려 있지 않은 윈도우(WT 를 따로 깔지 않은 10 등)에서도 같은 모습이 나오도록 함께 담는다.
+ * 굵게(700)와 기울임(400-italic)이 있어야 SGR 1·3 이 가짜 굵기로 뭉개지지 않는다 —
+ * 지금까지는 굵은 mono 얼굴이 아예 없어 브라우저가 400 을 늘려 그렸다.
+ * Cascadia Code 가 아니라 Mono 인 것도 의도다 — Mono 에는 합자(ligature)가 없어 터미널에 맞다.
+ * 라틴 부분집합만 가져온다 — 그 밖의 문자는 이미 담겨 있는 Noto Sans Mono·Noto Sans KR 이 맡는다.
+ * (부분집합별 CSS 에는 `unicode-range` 가 없어서 둘 이상 겹쳐 넣으면 나중 것이 앞선 것을 덮는다.)
+ */
+@import '@fontsource/cascadia-mono/latin-400.css';
+@import '@fontsource/cascadia-mono/latin-700.css';
+@import '@fontsource/cascadia-mono/latin-400-italic.css';
 @import '@xterm/xterm/css/xterm.css';
 
 :root {
+  /* 앱 본문 배경. 터미널의 가장 밝은 흰색(`TERM_THEME.brightWhite`)이 이 값을 쓴다. */
   --bg: #faf9f5;
   --chrome: #f0eee6;
   --panel: #fffefb;
@@ -48,6 +61,7 @@
   --accent-line-2: #ecd8ce;
   --accent-glow: #f0d3c8;
 
+  /* 터미널 본문 배경. `lib/termTheme.ts` 의 `TERM_THEME.background` 와 같은 값이어야 한다. */
   --term-bg: #1b1a18;
   --term-head: #26241f;
   --term-head-line: #332f28;
@@ -66,7 +80,7 @@
   --term-pad-b: 4px;
   --term-pad-l: 8px;
 
-  --mono: 'Noto Sans Mono', 'Noto Sans KR', ui-monospace, monospace;
+  --mono: 'Cascadia Mono', 'Noto Sans Mono', 'Noto Sans KR', ui-monospace, monospace;
   --sans: 'Roboto', 'Noto Sans KR', system-ui, -apple-system, sans-serif;
 }
 
@@ -468,6 +482,18 @@ button {
 .rail__btn--active {
   background: var(--panel);
   border-color: var(--line);
+}
+
+/* 레일에서 유일한 "만들기" 동작 — 펼친 머리글의 ＋ 와 같은 강조를 준다. */
+.rail__btn--accent {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.rail__btn--accent:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent-line);
+  color: var(--accent-deep);
 }
 
 .rail__sep {

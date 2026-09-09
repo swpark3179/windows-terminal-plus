@@ -16,12 +16,20 @@ fn temp_dir(tag: &str) -> PathBuf {
 }
 
 #[test]
-fn seed_starts_with_one_session_and_one_empty_block() {
+fn seed_starts_with_one_session_showing_a_full_screen_terminal() {
+    // 처음 켠 사람이 "터미널 열기" 를 누르는 한 걸음을 앱이 대신 밟아 준다.
     let snap = Snapshot::seed("C:/work/demo");
     assert_eq!(snap.sessions.len(), 1);
     assert_eq!(snap.sessions[0].name, "demo", "세션 이름은 폴더 이름에서 따온다");
     assert_eq!(snap.sessions[0].panes.len(), 1);
-    assert_eq!(snap.sessions[0].panes[0].kind, PaneKind::Empty);
+
+    let pane = &snap.sessions[0].panes[0];
+    assert_eq!(pane.kind, PaneKind::Term);
+    assert_eq!(
+        snap.sessions[0].full_pane_id.as_deref(),
+        Some(pane.id.as_str()),
+        "창이 하나뿐이니 세션 영역을 가득 채운 채로 시작한다"
+    );
     assert!(!snap.restored);
 }
 

@@ -499,9 +499,22 @@ export const useStore = create<AppState>((set, get) => ({
   newSession: async () => {
     const { flash, apply } = get();
     await guard(async () => {
-      apply(await api.createSession());
-      set({ sel: null, settings: true });
-      flash('새 세션 생성 · 빈 블럭에서 시작');
+      const snapshot = await api.createSession();
+      apply(snapshot);
+      // Rust 가 새 세션을 "터미널 하나가 세션을 가득 채운" 모습으로 세워 준다
+      // (`layout::start_full_terminal`). 그 창을 고른 상태로 둬야 Ctrl+Shift+F · Ctrl+휠 처럼
+      // "고른 창" 을 대상으로 하는 조작이 곧바로 듣는다.
+      const session = activeSession(snapshot);
+      set({
+        sel: session?.fullPaneId ?? session?.panes[0]?.id ?? null,
+        editMode: false,
+        op: null,
+        mergeSet: null,
+        mergeVerdict: null,
+      });
+      // 설정 모달을 띄우지 않는다 — 방금 띄운 터미널을 곧바로 덮어 버리기 때문이다.
+      // 대신 어디서 열 수 있는지 알려 준다 (Ctrl+, 는 터미널 안에서도 앱이 가져간다).
+      flash('새 세션 · 터미널 전체화면으로 시작 · 세션 설정은 Ctrl+,');
     }, flash);
   },
 

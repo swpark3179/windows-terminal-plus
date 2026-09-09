@@ -88,6 +88,12 @@ describe('appOwnsKey', () => {
     expect(appOwnsKey({ ctrlKey: true, shiftKey: false, key: 's' } as KeyboardEvent)).toBe(true);
   });
 
+  it('새 세션(Ctrl+Shift+T)은 앱의 것 — 사이드바가 접혀 있어도 열려 있어야 하는 길이다', () => {
+    expect(appOwnsKey({ ctrlKey: true, shiftKey: true, key: 'T' } as KeyboardEvent)).toBe(true);
+    // Shift 없는 Ctrl+T 는 readline 의 transpose-chars 라 셸의 것이다.
+    expect(appOwnsKey({ ctrlKey: true, shiftKey: false, key: 't' } as KeyboardEvent)).toBe(false);
+  });
+
   it('전체화면 토글은 터미널 안에서도 앱이 가져간다 — 되돌릴 길이 있어야 한다', () => {
     expect(appOwnsKey({ ctrlKey: true, shiftKey: true, key: 'F' } as KeyboardEvent)).toBe(true);
     // Shift 없는 Ctrl+F 는 readline 의 커서 이동이라 셸의 것이다.

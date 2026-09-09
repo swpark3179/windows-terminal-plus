@@ -50,6 +50,14 @@ export function App() {
         return;
       }
 
+      // 새 세션 — 윈도우 터미널의 "새 탭"(Ctrl+Shift+T)과 같은 자리.
+      // 사이드바가 접혀 있든 터미널이 포커스를 쥐고 있든 늘 열려 있어야 하는 길이다.
+      if (e.ctrlKey && e.shiftKey && k === 't') {
+        e.preventDefault();
+        void store.newSession();
+        return;
+      }
+
       if (k === 'escape') {
         store.closeOverlays();
         return;

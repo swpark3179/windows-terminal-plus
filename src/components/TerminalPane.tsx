@@ -22,37 +22,12 @@ import {
   sanitizePasteText,
 } from '../lib/clipboard';
 import { appOwnsKey, terminalKeyAction } from '../lib/keys';
+import { TERM_THEME, WORD_SEPARATOR } from '../lib/termTheme';
 import { registerTerminalClipboard, terminalClipboard } from '../lib/terminalRegistry';
+import { WIN32_INPUT_MODE, newlineSequence, setWin32InputMode } from '../lib/win32Input';
 import { useStore } from '../state/store';
 import type { Pane, PtyExitEvent } from '../state/types';
 import { TerminalScrollbar } from './TerminalScrollbar';
-
-/** 디자인 터미널 색상. */
-const THEME = {
-  background: '#1b1a18',
-  foreground: '#eceae4',
-  cursor: '#d99b74',
-  cursorAccent: '#1b1a18',
-  selectionBackground: '#413b33',
-  // 우클릭 메뉴가 포커스를 가져가도 선택 영역이 보여야 한다 (xterm 기본값은 회색이라 튄다).
-  selectionInactiveBackground: '#332f29',
-  black: '#33312b',
-  red: '#e08b73',
-  green: '#8fc98a',
-  yellow: '#e0b567',
-  blue: '#7fa8d9',
-  magenta: '#b99ae0',
-  cyan: '#7fc9c2',
-  white: '#eceae4',
-  brightBlack: '#9b968c',
-  brightRed: '#eda28c',
-  brightGreen: '#a6d9a1',
-  brightYellow: '#edc77f',
-  brightBlue: '#9cc0e8',
-  brightMagenta: '#cbb2ec',
-  brightCyan: '#9bd8d2',
-  brightWhite: '#faf9f5',
-};
 
 /**
  * OSC 52 의 시스템 클립보드 선택자.
@@ -80,13 +55,24 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
 
     const term = new Terminal({
       allowProposedApi: true,
-      fontFamily: "'Noto Sans Mono', 'Noto Sans KR', monospace",
+      // Cascadia Mono → (없으면) 함께 담은 Noto Sans Mono → 한글은 Noto Sans KR.
+      // 앞의 두 글꼴에는 한글 글리프가 **하나도 없어서** 마지막 항목이 반드시 있어야 한다.
+      fontFamily: "'Cascadia Mono', 'Noto Sans Mono', 'Noto Sans KR', monospace",
       fontSize: pane.zoom,
+      // 1.0 이 윈도우 터미널의 칸 비율에 가깝지만, 한글을 그리는 Noto Sans KR 의 글자 상자가
+      // 1.45em 이라 칸 높이가 그보다 낮으면 위아래가 잘린다. 1.25 가 잘리지 않는 가장 좁은 값이다.
       lineHeight: 1.25,
+      // 0 이 기본값이지만 명시해 둔다 — WebGL 렌더러는 칸 너비를 내림한 **뒤에** 이 값을 더해서,
+      // 0 이 아니면 글자가 칸에서 조금씩 밀려난다.
+      letterSpacing: 0,
+      fontWeight: 400,
+      // 이제 진짜 700 얼굴이 담겨 있다 (`app.css` 의 cascadia-mono/700).
+      fontWeightBold: 700,
       cursorBlink: true,
       cursorStyle: 'bar',
       scrollback: 8192,
-      theme: THEME,
+      theme: TERM_THEME,
+      wordSeparator: WORD_SEPARATOR,
       // 한글 등 넓은 글자의 칸 수를 정확히 세도록 unicode 11 표를 쓴다.
       windowsPty: { backend: 'conpty' },
     });
@@ -104,6 +90,20 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
           selection === SYSTEM_SELECTION ? writeClipboardText(data).catch(() => {}) : undefined,
       }),
     );
+
+    // ConPTY 는 부팅하며 `CSI ? 9001 h` 로 win32-input-mode 를 청한다 (`lib/win32Input.ts`).
+    // xterm 은 모르는 사설 모드라 조용히 버리므로 여기서 가로채 기억해 둔다.
+    // **우리 것이 아니면 반드시 false 를 돌려준다** — 이 자리는 대체 화면·괄호 붙여넣기·마우스
+    // 보고가 모두 지나가는 길목이라, true 를 잘못 돌려주면 xterm 의 기본 처리가 통째로 사라진다.
+    const win32Mode = (on: boolean) => (params: (number | number[])[]) => {
+      if (params.length !== 1 || params[0] !== WIN32_INPUT_MODE) return false;
+      setWin32InputMode(pane.id, on);
+      return true;
+    };
+    const modeHandlers = [
+      term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, win32Mode(true)),
+      term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, win32Mode(false)),
+    ];
 
     term.open(host);
     try {
@@ -176,9 +176,10 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
             term.scrollToBottom();
             pasteClipboard();
           } else if (action === 'newline') {
-            // 순수 LF — 이미 아무 데서나 그냥 통과하는 Ctrl+J 와 같은 바이트라 vim 등에서도 무해하다.
+            // ConPTY 가 win32-input-mode 를 청했으면 진짜 Shift+Enter 키 이벤트로, 아니면 예전처럼
+            // 순수 LF 로 보낸다. 어느 쪽이든 바이트로 펴지는 곳에는 LF 가 닿는다 (`lib/win32Input.ts`).
             term.scrollToBottom();
-            void writePty(pane.id, '\n').catch(() => {});
+            void writePty(pane.id, newlineSequence(pane.id)).catch(() => {});
           } else {
             void copySelection();
           }
@@ -263,6 +264,7 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       observer.disconnect();
       dataSub.dispose();
       binarySub.dispose();
+      modeHandlers.forEach((h) => h.dispose());
       unregisterClipboard();
       void exitPromise.then((un) => un());
       // 세션을 옮기는 것뿐일 수 있으므로 셸은 죽이지 않고 채널만 뗀다.

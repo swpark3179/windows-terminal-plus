@@ -1,6 +1,6 @@
 //! 세션 만들기 · 복제 · 삭제 · 설정 변경.
 
-use rterm_core::{EnvVar, Session, Shell, Snapshot};
+use rterm_core::{layout, EnvVar, Session, Shell, Snapshot};
 use serde::Deserialize;
 use tauri::State;
 
@@ -26,7 +26,9 @@ pub fn session_create(state: State<'_, AppState>) -> Snapshot {
         let n = snap.sessions.len();
         (format!("새 세션 {}", n + 1), state.home.clone(), n)
     };
-    let session = Session::new(name, cwd, color);
+    let mut session = Session::new(name, cwd, color);
+    // 새 세션은 곧바로 쓸 수 있어야 한다 — 터미널 하나를 세션 전체화면으로 띄운 채 시작한다.
+    layout::start_full_terminal(&mut session);
     let id = session.id.clone();
     {
         let mut snap = state.snapshot.lock();

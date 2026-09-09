@@ -26,6 +26,18 @@ pub enum Shell {
     Ssh,
 }
 
+impl Shell {
+    /// 창 제목·상태 표시에 쓰는 짧은 이름. 설정 모달의 select 값과 같다.
+    pub fn label(self) -> &'static str {
+        match self {
+            Shell::Pwsh => "pwsh",
+            Shell::Cmd => "cmd",
+            Shell::Wsl => "wsl",
+            Shell::Ssh => "ssh",
+        }
+    }
+}
+
 /// 창에 들어갈 수 있는 것. 디자인의 empty/term/md/text 에 이미지 뷰어를 더했다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

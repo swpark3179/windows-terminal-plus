@@ -6,6 +6,8 @@
  * `vi.mock` 팩토리는 호이스팅되므로 파일 안에 클래스를 둘 수 없다.
  */
 
+type CsiHandler = (params: (number | number[])[]) => boolean | Promise<boolean>;
+
 /** xterm 의 `IEvent` 모양(구독하면 `IDisposable` 이 나온다)만 흉내 낸 작은 발신기. */
 function emitter<T>() {
   const fns = new Set<(v: T) => void>();
@@ -58,6 +60,25 @@ export class StubTerminal {
   /** `scrollPages()` 가 받은 값들. */
   scrolledPages: number[] = [];
   keyHandler: ((e: KeyboardEvent) => boolean) | null = null;
+
+  /** 등록된 CSI 처리기 — 테스트가 시퀀스 도착을 흉내 낼 수 있게 붙잡아 둔다. */
+  csiHandlers: { prefix: string; final: string; cb: CsiHandler }[] = [];
+
+  parser = {
+    registerCsiHandler: (
+      id: { prefix?: string; intermediates?: string; final: string },
+      cb: CsiHandler,
+    ) => {
+      const entry = { prefix: id.prefix ?? '', final: id.final, cb };
+      this.csiHandlers.push(entry);
+      return {
+        dispose: () => {
+          const i = this.csiHandlers.indexOf(entry);
+          if (i >= 0) this.csiHandlers.splice(i, 1);
+        },
+      };
+    },
+  };
 
   constructor() {
     StubTerminal.last = this;
@@ -143,6 +164,21 @@ export class StubTerminal {
     this.buffer.active.type = type;
     this._bufferChange.fire(this.buffer.active);
     this._render.fire({ start: 0, end: this.rows - 1 });
+  }
+
+  /**
+   * `CSI <prefix> <params> <final>` 이 PTY 에서 도착한 상황.
+   *
+   * 실제 xterm 처럼 **나중에 등록된 처리기부터** 부르고, true 를 돌려주는 것이 나오면 멈춘다.
+   * 아무도 가져가지 않으면 false — 그래야 "우리 것이 아니면 흘려보낸다" 를 검사할 수 있다.
+   */
+  emitCsi(prefix: string, final: string, params: (number | number[])[]): boolean {
+    for (let i = this.csiHandlers.length - 1; i >= 0; i -= 1) {
+      const h = this.csiHandlers[i];
+      if (h.prefix !== prefix || h.final !== final) continue;
+      if (h.cb(params) === true) return true;
+    }
+    return false;
   }
 
   /** 배율·창 크기가 바뀌어 줄 수가 달라진 상황. */

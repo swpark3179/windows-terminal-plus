@@ -21,8 +21,8 @@ export function StatusBar() {
       </div>
       <div className="spacer" style={{ minWidth: 8 }} />
       <div className="statusbar__right" title={snapshotPath}>
-        Ctrl+E 레이아웃 · Ctrl+Shift+F 전체화면 · Ctrl+B 사이드바 · Ctrl+휠 확대 · 종료 시 자동
-        스냅샷
+        Ctrl+Shift+T 새 세션 · Ctrl+E 레이아웃 · Ctrl+Shift+F 전체화면 · Ctrl+B 사이드바 · Ctrl+휠
+        확대 · 종료 시 자동 스냅샷
       </div>
     </div>
   );

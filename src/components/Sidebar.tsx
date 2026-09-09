@@ -32,6 +32,17 @@ export function Sidebar() {
   if (!snapshot.sidebarOpen) {
     return (
       <div className="rail">
+        {/*
+          접힌 레일에서도 세션을 더 만들 수 있어야 한다 — 펼친 머리글과 같은 순서(＋ 다음 접기/펼치기)로 둔다.
+        */}
+        <button
+          className="rail__btn rail__btn--accent"
+          title="새 세션 · Ctrl+Shift+T"
+          aria-label="새 세션"
+          onClick={() => void newSession()}
+        >
+          ＋
+        </button>
         <button className="rail__btn" title="사이드바 펼치기 · Ctrl+B" onClick={toggleSidebar}>
           ◨
         </button>
@@ -64,7 +75,12 @@ export function Sidebar() {
         <div className="sidebar__label">세션</div>
         <div className="sidebar__count">{snapshot.sessions.length}</div>
         <div className="spacer" />
-        <button className="icon-btn icon-btn--accent" title="새 세션" onClick={() => void newSession()}>
+        <button
+          className="icon-btn icon-btn--accent"
+          title="새 세션 · Ctrl+Shift+T"
+          aria-label="새 세션"
+          onClick={() => void newSession()}
+        >
           ＋
         </button>
         <button

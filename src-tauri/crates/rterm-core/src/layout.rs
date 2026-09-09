@@ -59,6 +59,8 @@ pub enum LayoutError {
     WeightCountMismatch,
     #[error("빈 블럭은 전체화면으로 볼 수 없습니다")]
     CannotFullEmpty,
+    #[error("빈 블럭에만 열 수 있습니다")]
+    NotEmpty,
 }
 
 /// 병합 거부 사유. 사용자에게 보이는 토스트 문구를 그대로 들고 있다.
@@ -404,6 +406,50 @@ pub fn set_full(s: &mut Session, pane_id: Option<&str>) -> Result<(), LayoutErro
     }
     s.full_pane_id = Some(id.to_string());
     Ok(())
+}
+
+/// 빈 블럭을 이 세션의 셸을 띄울 터미널 자리로 바꾼다.
+///
+/// 실제 셸 스폰은 프론트엔드가 xterm 을 띄운 뒤 `pty_open` 으로 이어서 한다 —
+/// ConPTY 가 시작 직후 커서 위치를 물어 오므로 답해 줄 xterm 이 먼저 있어야 한다.
+/// 여기서 하는 일은 "이 자리는 터미널" 이라고 스냅샷에 적는 것뿐이다.
+pub fn open_terminal(s: &mut Session, pane_id: &str) -> Result<(), LayoutError> {
+    let title = format!("{} · 새 터미널", s.shell.label());
+    let pane = s.pane_mut(pane_id).ok_or(LayoutError::PaneNotFound)?;
+    if pane.kind != PaneKind::Empty {
+        return Err(LayoutError::NotEmpty);
+    }
+    pane.kind = PaneKind::Term;
+    pane.title = title;
+    pane.content = None;
+    pane.path = None;
+    pane.mode = None;
+    pane.scrollback = None;
+    pane.alive = false;
+    // 새로 여는 창이 남의 폴더에서 뜨거나 AI 를 자동 실행하면 안 된다.
+    pane.cwd = None;
+    pane.ai = None;
+    // 터미널은 빈 블럭에만 열리므로 전체화면인 창일 수 없다 — 가려지지 않게 창 모드로.
+    s.full_pane_id = None;
+    Ok(())
+}
+
+/// 갓 만든 세션을 "터미널 하나가 세션을 가득 채운" 모습으로 세운다.
+///
+/// 새 세션은 빈 블럭 하나로 태어나는데, 그 상태에서 사용자가 할 수 있는 일은 "터미널 열기" 를
+/// 누르는 것뿐이다. 그 한 걸음을 대신 밟아 주고, 창이 하나뿐이니 격자 여백 없이 세션 영역을
+/// 가득 쓰게 둔다. 이미 무엇인가 열려 있는 세션에는 아무 일도 하지 않는다(복제 세션 등).
+pub fn start_full_terminal(s: &mut Session) {
+    let Some(target) = s.first_empty().map(|p| p.id.clone()) else {
+        return;
+    };
+    if s.occupied_count() > 0 {
+        return;
+    }
+    if open_terminal(s, &target).is_ok() {
+        // 방금 터미널로 바꾼 창이므로 빈 블럭일 수 없다 — 실패할 이유가 없다.
+        let _ = set_full(s, Some(&target));
+    }
 }
 
 /// 새 내용을 대상 빈 블럭 자리에 끼워 넣는다 (디자인의 addPane).

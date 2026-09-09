@@ -7,6 +7,8 @@
  * 터미널 안에서도 쓰고 싶을 때를 위해 Shift 를 더한 조합을 함께 받는다.
  * 전체화면 토글(Ctrl+Shift+F)은 터미널을 가득 채운 상태에서 되돌릴 길이 필요하므로
  * 반드시 앱이 가져간다. Shift 없는 Ctrl+F 는 readline 의 커서 이동이라 건드리지 않는다.
+ * 새 세션(Ctrl+Shift+T)은 윈도우 터미널의 "새 탭" 과 같은 자리다. Shift 없는 Ctrl+T 는
+ * readline 의 transpose-chars 라 그대로 셸에 넘긴다.
  *
  * 복사·붙여넣기 조합은 **여기 넣지 않는다.** 선택 영역이 있는지 알아야 판정이 갈리므로
  * 터미널 안(`terminalKeyAction`)에서 풀고, 전역 처리기는 지금처럼 모르는 채로 둔다.
@@ -14,7 +16,7 @@
 export function appOwnsKey(e: KeyboardEvent): boolean {
   if (!e.ctrlKey) return false;
   const k = keyName(e);
-  if (e.shiftKey) return k === 'p' || k === 'b' || k === 'e' || k === 'f';
+  if (e.shiftKey) return k === 'p' || k === 'b' || k === 'e' || k === 'f' || k === 't';
   return k === ',' || k === 's' || k === '+' || k === '=' || k === '-' || k === '0';
 }
 
@@ -75,10 +77,9 @@ export function terminalKeyAction(e: KeyLike): TerminalKeyAction {
     return null;
   }
 
-  // Shift+Enter · Ctrl+Enter — 그냥 Enter 는 xterm 이 항상 CR 하나로 뭉개 버려서 셸이 구분할
-  // 수 없다. claude·codex 둘 다 자기 터미널이 뭔지 모를 때는 순수 LF(=Ctrl+J 가 보내는 바이트)를
-  // 줄바꿈으로 알아듣는 공통 경로를 갖고 있다 — ESC 붙은 메타+엔터 관례는 codex 에선 오히려
-  // 그대로 제출돼 버린다(Alt+Enter 리그레션과 같은 증상). 그래서 Ctrl+J 를 흉내 낸다.
+  // Shift+Enter · Ctrl+Enter — 그냥 Enter 는 VT 로 보면 CR 하나뿐이라 셸이 구분할 수 없다.
+  // 무엇을 대신 보낼지는 `lib/win32Input.ts` 가 정한다 (ConPTY 가 청했으면 진짜 Shift+Enter
+  // 키 이벤트, 아니면 순수 LF). 여기서는 "줄바꿈을 뜻하는 키" 라는 것만 가른다.
   if (k === 'enter' && (e.ctrlKey || e.shiftKey)) return 'newline';
 
   if (!e.ctrlKey) return null;

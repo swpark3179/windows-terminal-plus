@@ -37,6 +37,7 @@ import { MAX_PASTE_CHARS } from '../lib/clipboard';
 import { MIN_THUMB_PX } from '../lib/scrollbar';
 import { WHEEL_CAP_PER_FRAME } from '../lib/termWheel';
 import { terminalClipboard } from '../lib/terminalRegistry';
+import { WIN32_NEWLINE, resetWin32InputModes } from '../lib/win32Input';
 import type { Pane } from '../state/types';
 
 const readMock = vi.mocked(readText);
@@ -78,6 +79,7 @@ function mount() {
 
 beforeEach(() => {
   resetTerminalStub();
+  resetWin32InputModes();
   readMock.mockReset();
   readMock.mockResolvedValue('');
   writeMock.mockReset();
@@ -222,6 +224,63 @@ describe('줄바꿈', () => {
 
     expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
     await waitFor(() => expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: '\n' }));
+  });
+});
+
+describe('win32-input-mode', () => {
+  /** ConPTY 가 부팅하며 보내는 `CSI ? 9001 h`. */
+  const askForWin32 = (term: ReturnType<typeof lastTerminal>) => term.emitCsi('?', 'h', [9001]);
+
+  it('ConPTY 가 청하면 Shift+Enter 를 진짜 키 이벤트로 보낸다 — codex 의 줄바꿈이 여기서 갈린다', async () => {
+    const { term, press } = mount();
+    expect(askForWin32(term)).toBe(true);
+
+    expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+    await waitFor(() =>
+      expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: WIN32_NEWLINE }),
+    );
+    // Vk=VK_RETURN · Sc=0x1c · Uc=LF · Kd=1 · Cs=SHIFT_PRESSED.
+    expect(WIN32_NEWLINE).toBe('\x1b[13;28;10;1;16_');
+  });
+
+  it('끄라고 하면 예전의 LF 로 돌아간다', async () => {
+    const { term, press } = mount();
+    askForWin32(term);
+    expect(term.emitCsi('?', 'l', [9001])).toBe(true);
+
+    expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+    await waitFor(() => expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: '\n' }));
+  });
+
+  it('세션을 다녀와 xterm 이 새로 만들어져도 모드를 잊지 않는다 — ConPTY 는 한 번만 청한다', async () => {
+    const first = mount();
+    askForWin32(first.term);
+    first.view.unmount();
+
+    // 같은 창 id 로 다시 마운트 — 셸(PTY)은 그대로 살아 있는 상황.
+    const { press } = mount();
+    expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+    await waitFor(() =>
+      expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: WIN32_NEWLINE }),
+    );
+  });
+
+  it('9001 이 아닌 사설 모드는 xterm 에 그대로 흘려보낸다', () => {
+    const { term } = mount();
+    // 대체 화면(1049) · 괄호 붙여넣기(2004) · 마우스 보고(1006) 가 모두 이 길로 지나간다.
+    for (const mode of [1049, 2004, 1006, 25]) {
+      expect(term.emitCsi('?', 'h', [mode])).toBe(false);
+      expect(term.emitCsi('?', 'l', [mode])).toBe(false);
+    }
+    // 여러 개를 한 번에 켜는 형태도 우리 것이 아니다.
+    expect(term.emitCsi('?', 'h', [1000, 1006])).toBe(false);
+  });
+
+  it('창을 떠나면 처리기를 거둔다', () => {
+    const { view, term } = mount();
+    expect(term.csiHandlers.length).toBe(2);
+    view.unmount();
+    expect(term.csiHandlers.length).toBe(0);
   });
 });
 
