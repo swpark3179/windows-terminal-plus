@@ -11,7 +11,7 @@
  * readline 의 transpose-chars 라 그대로 셸에 넘긴다.
  *
  * 저장은 Ctrl+Shift+S 로 옮겼다. Shift 없는 Ctrl+S 는 터미널이 관찰할 수 있는 진짜 키다
- * (0x13 · XOFF · readline 의 정방향 검색)  — 앱이 가져가 버리면 셸에서 그 키가 죽는다.
+ * (0x13 · XOFF · readline 의 정방향 검색) — 앱이 가져가 버리면 셸에서 그 키가 죽는다.
  * 터미널 밖(에디터 패널)에서는 이 관문을 지나지 않으므로 Ctrl+S 가 그대로 듣는다.
  *
  * `Ctrl+Shift+<글자>` 는 xterm 이 어떤 바이트도 내보내지 않는 조합이라(`common/input/Keyboard.ts`
