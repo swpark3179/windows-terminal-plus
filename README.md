@@ -414,9 +414,15 @@ ESC [ 13 ; 28 ; 10 ; 1 ; 16 _
 `UnicodeChar` 에 LF 를 실은 것이 핵심이다. 같은 키 하나가 성격이 다른 두 부류에 닿기 때문이다.
 
 - **콘솔 레코드를 그대로 읽는 쪽** (`codex` → crossterm): `wVirtualKeyCode` 를 본다.
-  `VK_RETURN` + `SHIFT_PRESSED` → `KeyEvent{ Enter, SHIFT }` → codex 의 `shift-enter` 줄바꿈 자리.
-  윈도우에서는 crossterm 의 `supports_keyboard_enhancement()` 가 늘 `false` 라 kitty 키보드
-  프로토콜 길이 막혀 있고, 이 길만 남는다.
+  `VK_RETURN` → `KeyCode::Enter`, `SHIFT_PRESSED` → `KeyModifiers::SHIFT`
+  (crossterm `event/sys/windows/parse.rs`). codex 안에서 그 이벤트는 제출 판정을 **빗나가고**
+  줄바꿈 판정에 **맞는다** — 제출은 `plain(Enter)` 하나뿐이고(`chat_composer.rs` 의 `submit_keys`),
+  줄바꿈 목록에는 `shift(Enter)` 가 들어 있다(`keymap.rs` 의 `editor.insert_newline`).
+  둘을 견주는 `normalize_key_parts` 는 `KeyCode::Char` 가 아닌 키의 수정자를 건드리지 않으므로
+  `(Enter, SHIFT)` 는 `(Enter, NONE)` 과 절대 같아지지 않는다(`key_hint.rs`).
+  윈도우에서는 crossterm 의 `supports_keyboard_enhancement()` 가 늘 `Ok(false)` 라
+  (`terminal/sys/windows.rs`: "This always returns `Ok(false)` on Windows") kitty 키보드
+  프로토콜 길이 아예 막혀 있고, 이 길만 남는다.
 - **레코드를 다시 바이트로 펴는 쪽** (`claude` → Node/libuv, 그리고 `wsl.exe`·`ssh.exe`):
   `UnicodeChar` 가 0 이 아니면 그 글자를 그대로 내보낸다(`libuv` 의 `uv_tty_read`).
   그래서 예전과 똑같은 순수 LF 가 흘러가 `claude` 의 줄바꿈이 유지되고, WSL·SSH 안의 리눅스
@@ -426,6 +432,14 @@ ESC [ 13 ; 28 ; 10 ; 1 ; 16 _
 LF 는 이미 아무 데서나(`vim`·`less`·`tmux` 의 대체 화면 포함) 통과하던 `Ctrl+J` 와 같은 바이트다.
 Claude Code 공식 `/terminal-setup` 이 쓰는 `ESC+CR`(메타+엔터) 관례는 쓰지 않는다 — `codex` 는
 그 조합을 그냥 제출로 읽는다.
+
+> LF 만 보내던 예전 방식이 윈도우에서 불안했던 까닭. ConPTY 는 C0 제어문자를
+> `VkKeyScanW` 로 되짚어 키 이벤트를 만드는데(`InputStateMachineEngine::_GenerateKeyFromChar`),
+> `'\n'` 에 대응하는 키가 자판에 없다. 그래서 클라이언트에게는 `Enter`+`Shift` 가 아니라
+> 가상 키와 수정자가 어긋난 이벤트가 도착하고, 그 뒤는 프로그램마다 다른 예비 경로에 맡겨진다 —
+> 되기도 하고 안 되기도 한다. win32-input-mode 는 그 되짚기를 아예 건너뛰고 **의도한 키 이벤트를
+> 그대로** 전한다. LF 는 이제 위 표의 `UnicodeChar` 자리에 남아, 바이트로 펴지는 쪽을 위한
+> 예비 경로 역할만 한다.
 
 줄바꿈은 붙여넣기처럼 스크롤을 바닥으로 돌려놓는다 — 스크롤을 올려 둔 채 줄을 넣으면 xterm 이
 원래 하는 자동 스크롤을 우리가 가로채는 키 처리기가 건너뛰기 때문에, 우리가 대신 해 준다.

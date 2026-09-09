@@ -25,13 +25,24 @@
  * 같은 키 하나가 성격이 다른 두 부류의 프로그램에 닿는다.
  *
  * - **콘솔 레코드를 그대로 읽는 쪽** (codex → crossterm): `wVirtualKeyCode` 를 본다.
- *   `VK_RETURN` + `SHIFT_PRESSED` → `KeyEvent{ Enter, SHIFT }` → codex 의 `shift-enter` 줄바꿈 자리.
+ *   `VK_RETURN` → `KeyCode::Enter`, `SHIFT_PRESSED` → `KeyModifiers::SHIFT`
+ *   (crossterm `event/sys/windows/parse.rs`). codex 안에서 그 이벤트는 **제출을 빗나가고
+ *   줄바꿈에 맞는다** — 제출은 `plain(Enter)` 하나뿐이고(`chat_composer.rs` 의 `submit_keys`),
+ *   줄바꿈 목록에는 `shift(Enter)` 가 있다(`keymap.rs` 의 `editor.insert_newline`). 둘을 견주는
+ *   `normalize_key_parts` 는 `KeyCode::Char` 가 아닌 키의 수정자를 건드리지 않으므로
+ *   `(Enter, SHIFT)` 가 `(Enter, NONE)` 과 같아질 길이 없다(`key_hint.rs`).
  * - **레코드를 다시 바이트로 펴는 쪽** (claude → Node/libuv, 그리고 `wsl.exe`·`ssh.exe`):
  *   `UnicodeChar` 가 0 이 아니면 그 글자를 그대로 내보낸다(`libuv` 의 `uv_tty_read`).
  *   여기에 LF(10)를 실어 두면 예전과 똑같이 순수 LF 가 흘러가 claude 의 줄바꿈이 유지된다.
  *
  * 그래서 한 시퀀스로 양쪽이 함께 산다. 모드가 켜지지 않은 곳(윈도우가 아닌 개발 환경 등)에서는
  * 예전 그대로 LF 한 바이트만 보낸다 — 청하지 않은 상대에게 win32 시퀀스를 들이밀지 않는다.
+ *
+ * LF 만 보내던 예전 방식이 윈도우에서 불안했던 까닭도 여기 있다. ConPTY 는 C0 제어문자를
+ * `VkKeyScanW` 로 되짚어 키 이벤트를 만드는데(`InputStateMachineEngine::_GenerateKeyFromChar`),
+ * `'\n'` 에 대응하는 키가 자판에 없다. 그래서 클라이언트에게는 `Enter`+`Shift` 가 아니라 가상 키와
+ * 수정자가 어긋난 이벤트가 도착하고, 그 뒤는 프로그램마다 다른 예비 경로에 맡겨진다. 이 모드는
+ * 그 되짚기를 아예 건너뛰고 **의도한 키 이벤트를 그대로** 전한다.
  */
 
 /** ConPTY 가 켜 달라고 청하는 사설 모드 번호 (`CSI ? 9001 h` / `l`). */
