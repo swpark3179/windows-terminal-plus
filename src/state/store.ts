@@ -138,6 +138,7 @@ interface AppState {
   setConfirm: (request: ConfirmRequest | null) => void;
   setResizeDraft: (draft: { axis: TrackAxis; weights: number[] } | null) => void;
   setLiveTitle: (paneId: string, title: string) => void;
+  clearLiveTitle: (paneId: string) => void;
   resetTrackWeights: () => Promise<void>;
   closeOverlays: () => void;
 }
@@ -204,7 +205,17 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  apply: (snapshot) => set({ snapshot }),
+  apply: (snapshot) =>
+    set((s) => {
+      // 스냅샷에서 사라진 창의 제목은 함께 잊는다 — 세션 삭제·병합·스냅샷 초기화가 모두
+      // 여기를 지나므로, 각자 지우게 하는 것보다 한 곳에서 훑는 것이 새지 않는다.
+      const ids = new Set(snapshot.sessions.flatMap((x) => x.panes.map((p) => p.id)));
+      const stale = Object.keys(s.liveTitles).filter((id) => !ids.has(id));
+      if (stale.length === 0) return { snapshot };
+      const liveTitles = { ...s.liveTitles };
+      for (const id of stale) delete liveTitles[id];
+      return { snapshot, liveTitles };
+    }),
 
   flash: (message) => {
     clearTimeout(toastTimer);
@@ -390,12 +401,8 @@ export const useStore = create<AppState>((set, get) => ({
     const { snapshot, flash, apply } = get();
     if (!snapshot) return;
     await guard(async () => {
+      // 닫힌 창은 새 id 의 빈 블럭이 되므로 `apply` 의 훑기가 옛 제목을 함께 거둔다.
       apply(await api.closePane(snapshot.activeId, paneId));
-      // 셸이 알려 준 제목도 함께 잊는다 — 그 창은 이제 빈 블럭이다.
-      set((s) => {
-        const { [paneId]: _gone, ...rest } = s.liveTitles;
-        return { liveTitles: rest };
-      });
       flash('창을 닫아 빈 블럭으로');
     }, flash);
   },
@@ -592,6 +599,14 @@ export const useStore = create<AppState>((set, get) => ({
 
   setLiveTitle: (paneId, title) =>
     set((s) => (s.liveTitles[paneId] === title ? s : { liveTitles: { ...s.liveTitles, [paneId]: title } })),
+
+  clearLiveTitle: (paneId) =>
+    set((s) => {
+      if (!(paneId in s.liveTitles)) return s;
+      const liveTitles = { ...s.liveTitles };
+      delete liveTitles[paneId];
+      return { liveTitles };
+    }),
 
   resetTrackWeights: async () => {
     const { snapshot, flash, apply } = get();

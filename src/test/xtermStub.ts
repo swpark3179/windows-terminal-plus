@@ -92,9 +92,16 @@ export class StubTerminal {
     StubTerminal.last = this;
   }
 
+  /** `write()` 로 들어온 것들 — 앱이 터미널에 직접 먹인 시퀀스를 검사할 때. */
+  written: string[] = [];
+
   loadAddon() {}
   open() {}
-  write() {}
+
+  write(data: string | Uint8Array) {
+    this.written.push(typeof data === 'string' ? data : new TextDecoder().decode(data));
+  }
+
   dispose() {}
 
   attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) {

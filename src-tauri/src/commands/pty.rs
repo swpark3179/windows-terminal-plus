@@ -35,6 +35,9 @@ pub struct ExitEvent {
     pub code: u32,
 }
 
+/// "버퍼 지우기" 시퀀스 — 프론트엔드의 `CLEAR_BUFFER_SEQ` 와 **같은 값이어야 한다.**
+const CLEAR_BUFFER_SEQ: &[u8] = b"\x1b[H\x1b[2J\x1b[3J";
+
 /// PATH 에 실행 파일이 있는지 본다. pwsh 가 없는 PC 에서 기본 powershell 로 물러나기 위함.
 fn program_exists(name: &str) -> bool {
     std::env::var_os("PATH")
@@ -395,15 +398,23 @@ pub fn pty_write(state: State<'_, AppState>, pane_id: String, data: String) -> R
 /// 있어서, 세션을 다녀오거나 앱을 다시 켜면 방금 버린 것이 되살아난다 — `pty_open` 이
 /// 재연결할 때 `serialize_scrollback` 을 다시 써 주기 때문이다.
 ///
-/// 화면 쪽은 프론트엔드가 `Terminal.clear()` 로 비운다. 코어에는 같은 뜻의 시퀀스를 먹인다:
-/// `CUP`(커서를 맨 위로) · `ED 2`(화면) · `ED 3`(저장된 줄).
+/// 프론트엔드도 **같은 시퀀스**를 xterm 에 먹인다(`CLEAR_BUFFER_SEQ`). 그래야 두 버퍼가
+/// 같은 상태로 남는다: `CUP`(커서를 맨 위로) · `ED 2`(화면) · `ED 3`(저장된 줄).
+///
+/// 대체 화면에서는 거부한다. 거기에는 버릴 히스토리가 없고(`ED 3` 는 그냥 아무 일도 하지
+/// 않는다), `ED 2` 가 그 프로그램이 그려 둔 화면만 지워 버린다. 프론트엔드도 같은 판정을 하지만
+/// 두 버퍼의 모드가 어긋난 순간이 있을 수 있으므로 여기서도 한 번 더 본다.
 #[tauri::command]
 pub fn pty_clear(state: State<'_, AppState>, pane_id: String) -> Result<(), String> {
     let terms = state.terminals.lock();
     let slot = terms
         .get(&pane_id)
         .ok_or_else(|| "터미널이 열려 있지 않습니다".to_string())?;
-    slot.core.lock().feed(b"\x1b[H\x1b[2J\x1b[3J");
+    let mut core = slot.core.lock();
+    if core.on_alternate_screen() {
+        return Err("전체화면 프로그램이 도는 동안에는 버퍼를 비울 수 없습니다".into());
+    }
+    core.feed(CLEAR_BUFFER_SEQ);
     Ok(())
 }
 
@@ -521,24 +532,47 @@ mod tests {
         assert_eq!(m.prompt_seq, 1, "프롬프트가 한 번 돌았다");
     }
 
-    #[test]
-    fn the_clear_sequence_really_drops_the_rust_scrollback() {
-        // `pty_clear` 가 코어에 먹이는 시퀀스가 실제로 통하는지 — 통하지 않으면 화면만 비워지고
-        // 다음 재연결에서 옛 줄이 되살아난다.
+    fn core_with_scrollback() -> TermCore {
         let mut core = TermCore::new(20, 3, 100);
         for i in 0..30 {
             core.feed(format!("line {i}\r\n").as_bytes());
         }
+        core
+    }
+
+    #[test]
+    fn the_clear_sequence_really_drops_the_rust_scrollback() {
+        // `pty_clear` 가 코어에 먹이는 시퀀스가 실제로 통하는지 — 통하지 않으면 화면만 비워지고
+        // 다음 재연결에서 옛 줄이 되살아난다.
+        let mut core = core_with_scrollback();
         assert!(
             core.serialize_scrollback(SCROLLBACK_LINES).contains("line 0"),
             "먼저 스크롤백에 쌓여 있어야 한다"
         );
 
-        core.feed(b"\x1b[H\x1b[2J\x1b[3J");
+        core.feed(CLEAR_BUFFER_SEQ);
 
         let after = core.serialize_scrollback(SCROLLBACK_LINES);
         assert!(!after.contains("line 0"), "저장된 줄이 남아 있다: {after:?}");
         assert!(!after.contains("line 29"), "화면도 비워져야 한다: {after:?}");
+    }
+
+    #[test]
+    fn the_clear_sequence_is_useless_on_the_alternate_screen() {
+        // 그래서 `pty_clear` 가 거기서는 거부한다. 대체 화면에는 버릴 히스토리가 없고,
+        // `ED 2` 는 그 프로그램이 그려 둔 화면만 지워 버린다 (프로그램은 그것을 모른다).
+        let mut core = core_with_scrollback();
+        core.feed(b"\x1b[?1049h");
+        assert!(core.on_alternate_screen());
+
+        core.feed(CLEAR_BUFFER_SEQ);
+        core.feed(b"\x1b[?1049l");
+
+        let after = core.serialize_scrollback(SCROLLBACK_LINES);
+        assert!(
+            after.contains("line 0"),
+            "일반 화면의 스크롤백은 그대로 남는다 — 지운 척하면 안 된다: {after:?}"
+        );
     }
 
     #[test]

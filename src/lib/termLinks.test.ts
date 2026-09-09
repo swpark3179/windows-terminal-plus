@@ -19,7 +19,7 @@ function setup(opts: { open?: () => Promise<void> } = {}) {
 }
 
 const mouse = (init: Partial<MouseEvent> = {}) =>
-  ({ ctrlKey: false, clientX: 100, clientY: 120, ...init }) as MouseEvent;
+  ({ button: 0, ctrlKey: false, clientX: 100, clientY: 120, ...init }) as MouseEvent;
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -43,6 +43,28 @@ describe('링크 열기', () => {
     const { links, open } = setup();
     links.activate(undefined, 'https://example.com');
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it('주 버튼이 아니면 아무 말도 하지 않는다 — 우클릭·가운데 클릭도 이 처리기를 지난다', () => {
+    const { links, open, flash } = setup();
+    for (const button of [1, 2]) {
+      links.activate(mouse({ button, ctrlKey: true }), 'https://example.com');
+    }
+    expect(open).not.toHaveBeenCalled();
+    expect(flash).not.toHaveBeenCalled();
+  });
+
+  it('한글이 든 주소는 퍼센트 인코딩해서 넘긴다 — Rust 검사는 ASCII 만 받는다', () => {
+    const { links, open } = setup();
+    links.activate(mouse({ ctrlKey: true }), 'https://example.com/한글?q=값');
+    expect(open).toHaveBeenCalledWith('https://example.com/%ED%95%9C%EA%B8%80?q=%EA%B0%92');
+  });
+
+  it('주소로 읽을 수 없으면 열지 않는다', () => {
+    const { links, open, flash } = setup();
+    links.activate(mouse({ ctrlKey: true }), 'https://');
+    expect(open).not.toHaveBeenCalled();
+    expect(flash).toHaveBeenCalledWith(expect.stringContaining('읽을 수 없습니다'));
   });
 
   it('열지 못하면 사유를 알린다', async () => {

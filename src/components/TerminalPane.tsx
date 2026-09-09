@@ -45,6 +45,14 @@ const SYSTEM_SELECTION = 'c' as ClipboardSelectionType;
 /** 벨을 화면으로 알리는 시간(ms). 소리는 내지 않는다 — 창이 여럿인 앱에서 어느 창인지 알 수 없다. */
 const BELL_FLASH_MS = 140;
 
+/**
+ * "버퍼 지우기" 시퀀스 — 커서를 맨 위로, 화면을 지우고, 저장된 줄까지 버린다.
+ *
+ * 화면(xterm)과 Rust 코어에 **같은 값을 먹여** 두 버퍼가 갈라지지 않게 한다
+ * (`commands/pty.rs` 의 `pty_clear` 도 이 시퀀스를 쓴다).
+ */
+const CLEAR_BUFFER_SEQ = '\x1b[H\x1b[2J\x1b[3J';
+
 export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   /** 벨을 알릴 곳 — 창의 눈에 보이는 테두리는 `.term-body` 다. */
@@ -91,8 +99,8 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       scrollback: 8192,
       theme: TERM_THEME,
       wordSeparator: WORD_SEPARATOR,
-      // 주지 않으면 xterm 이 자기 기본 동작(영어 confirm + `location.href`)으로 물러난다 —
-      // 창이 하나뿐인 이 앱에서는 문서째로 옮겨 가 모든 터미널이 사라진다 (`lib/termLinks.ts`).
+      // 주지 않으면 xterm 이 자기 기본 동작으로 물러난다 — 영어 confirm 한 번 뒤 `window.open()`
+      // 이고, 수정자도 요구하지 않으며, 우리 주소 검사를 지나지 않는다 (`lib/termLinks.ts`).
       linkHandler: links.handler,
       // 한글 등 넓은 글자의 칸 수를 정확히 세도록 unicode 11 표를 쓴다.
       windowsPty: { backend: 'conpty' },
@@ -185,6 +193,33 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       });
     };
 
+    /**
+     * 윈도우 터미널의 "버퍼 지우기"(Ctrl+Shift+K).
+     *
+     * 두 곳을 함께 비워야 한다 — 스크롤백의 진짜 주인은 Rust 코어이고, 화면만 비우면 세션을
+     * 다녀올 때 `pty_open` 이 `serialize_scrollback` 을 다시 써 방금 버린 줄이 되살아난다.
+     *
+     * 그래서 **같은 시퀀스를 양쪽에 먹인다** — `CUP`(커서 맨 위) · `ED 2`(화면) · `ED 3`(저장된 줄).
+     * xterm 의 `clear()` 는 프롬프트 줄 하나를 남기는데 코어는 남기지 않아서, 그것으로는 두 버퍼가
+     * 어긋난 채 갈라진다. 같은 바이트를 주면 같은 상태가 된다 (xterm 도 ED 3 를 안다 —
+     * `common/InputHandler.ts` 의 `eraseInDisplay` case 3).
+     *
+     * **대체 화면에서는 하지 않는다.** claude·codex·vim 이 도는 자리인데, 거기서는 (1) 지울
+     * 스크롤백이 애초에 없고(대체 화면에는 히스토리가 없다), (2) `ED 2` 가 그 프로그램이 그려 둔
+     * 화면만 지워 버린다 — 프로그램은 지워졌다는 것을 모르므로 다시 그리지도 않는다.
+     */
+    const clearScrollback = () => {
+      if (term.buffer.active.type === 'alternate') {
+        flash('전체화면 프로그램이 도는 동안에는 버퍼를 비울 수 없습니다');
+        return;
+      }
+      term.write(CLEAR_BUFFER_SEQ);
+      // 성공을 먼저 알리지 않는다 — Rust 쪽이 실패하면 되살아날 것이기 때문이다.
+      void clearPtyScrollback(pane.id)
+        .then(() => flash('스크롤백을 비웠습니다'))
+        .catch(() => flash('스크롤백을 비우지 못했습니다'));
+    };
+
     const unregisterClipboard = registerTerminalClipboard(pane.id, {
       copy: copySelection,
       paste: pasteClipboard,
@@ -215,11 +250,7 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
           } else if (action === 'select-all') {
             term.selectAll();
           } else if (action === 'clear') {
-            // 윈도우 터미널의 "버퍼 지우기"(Ctrl+Shift+K) — 프롬프트 줄만 남기고 버린다.
-            // Rust 버퍼도 함께 비워야 세션을 다녀왔을 때 되살아나지 않는다.
-            term.clear();
-            void clearPtyScrollback(pane.id).catch(() => {});
-            flash('스크롤백을 비웠습니다');
+            clearScrollback();
           } else if (action === 'newline') {
             // ConPTY 가 win32-input-mode 를 청했으면 진짜 Shift+Enter 키 이벤트로, 아니면 예전처럼
             // 순수 LF 로 보낸다. 어느 쪽이든 바이트로 펴지는 곳에는 LF 가 닿는다 (`lib/win32Input.ts`).
@@ -283,6 +314,9 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     void openPty(sessionId, pane.id, term.cols, term.rows, channel)
       .then((res) => {
         if (disposed) return;
+        // 새로 띄운 셸이면 앞선 셸의 제목을 물려받지 않는다 (다시 붙은 것이면 그대로 둔다 —
+        // 재생되는 스크롤백에는 OSC 가 없어서 그 제목이 유일하게 남은 정보다).
+        if (!res.attached) useStore.getState().clearLiveTitle(pane.id);
         // 이전 화면을 먼저 되살리고, 배너로 과거와 현재를 가른다.
         if (res.restored) term.write(res.restored);
         if (res.banner) term.write(res.banner);
@@ -318,6 +352,8 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     const exitPromise = listen<PtyExitEvent>('pty://exit', (event) => {
       if (disposed || event.payload.paneId !== pane.id) return;
       term.write(`\r\n\x1b[90m[프로세스 종료 · 코드 ${event.payload.code}]\x1b[0m\r\n`);
+      // 셸이 없어졌으면 그 셸이 알려 준 제목도 더 이상 참이 아니다.
+      useStore.getState().clearLiveTitle(pane.id);
       void refresh();
     });
 

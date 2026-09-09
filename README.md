@@ -175,9 +175,18 @@ xterm 기본값은 `--flag=value` 나 `C:\a\b` 를 한 낱말로 잡는다.
 `BEL` 은 소리 대신 그 창의 테두리를 한 번 밝힌다(xterm 5.5 에는 벨 표시가 아예 없다).
 창이 여럿인 앱에서 소리는 어느 창인지 알려 주지 못한다.
 
-`Ctrl+Shift+K`(스크롤백 비우기)는 화면과 **Rust 버퍼를 함께** 비운다(`pty_clear`). 화면만
-비우면 스냅샷이 여전히 옛 줄을 들고 있어서, 세션을 다녀오거나 앱을 다시 켤 때 방금 버린 것이
-되살아난다 — 재연결이 `serialize_scrollback` 을 다시 써 주기 때문이다.
+`Ctrl+Shift+K`(스크롤백 비우기)는 화면과 **Rust 버퍼에 같은 시퀀스를 먹인다** —
+`CUP`·`ED 2`·`ED 3`(`pty_clear`). 두 가지를 지키기 위해서다.
+
+- 화면만 비우면 스냅샷이 여전히 옛 줄을 들고 있어서, 세션을 다녀오거나 앱을 다시 켤 때 방금 버린
+  것이 되살아난다 — 재연결이 `serialize_scrollback` 을 다시 써 주기 때문이다.
+- 한쪽에만 다른 조작을 하면(xterm 의 `clear()` 는 프롬프트 줄 하나를 남기고 코어는 남기지 않는다)
+  두 버퍼가 어긋난 채 갈라진다. 같은 바이트를 주면 같은 상태가 된다.
+
+**대체 화면에서는 거부한다.** `claude`·`codex`·`vim` 이 도는 자리인데, 거기에는 버릴 히스토리가
+아예 없고(`ED 3` 는 아무 일도 하지 않는다) `ED 2` 는 그 프로그램이 그려 둔 화면만 지워 버린다 —
+프로그램은 지워진 것을 모르므로 다시 그리지도 않는다. 실제로 그런지는 테스트로 확인해 두었다
+(`commands/pty.rs` 의 `the_clear_sequence_is_useless_on_the_alternate_screen`).
 
 GPU 컨텍스트를 잃으면(절전 복귀·드라이버 갱신) WebGL 애드온을 떼고 DOM 렌더러로 돌아간다.
 그러지 않으면 셸은 계속 도는데 화면만 옛 글자로 얼어붙는다.
@@ -400,46 +409,66 @@ VT 에는 `Shift+Enter` 를 나타낼 바이트가 **없다.** `Shift` 를 누�
 
 ConPTY 는 부팅하자마자 `ESC[c ESC[?1004h ESC[?9001h` 를 우리에게 보낸다(`src/host/VtIo.cpp` 의
 `StartIfNeeded`). 마지막 것이 "키를 `INPUT_RECORD` 모양 그대로 달라" 는 청이다. 알아들으면
-(`lib/win32Input.ts`) 그때부터 `Shift+Enter` 를 이렇게 보낸다.
+(`lib/win32Input.ts`) 그때부터 줄바꿈을 이렇게 보낸다 — **`Ctrl+J` 의 눌림과 뗌**이다.
 
 ```
-ESC [ 13 ; 28 ; 10 ; 1 ; 16 _
-      │    │    │   │   └ dwControlKeyState = SHIFT_PRESSED
+ESC [ 74 ; 36 ; 10 ; 1 ; 8 _      ESC [ 74 ; 36 ; 10 ; 0 ; 8 _
+      │    │    │   │   └ dwControlKeyState = LEFT_CTRL_PRESSED   (뗌: bKeyDown = 0)
       │    │    │   └ bKeyDown = 1
       │    │    └ UnicodeChar = 10 (LF)
-      │    └ wVirtualScanCode = 0x1c
-      └ wVirtualKeyCode = VK_RETURN
+      │    └ wVirtualScanCode = 0x24  (J 자리)
+      └ wVirtualKeyCode = VK_J
 ```
 
-`UnicodeChar` 에 LF 를 실은 것이 핵심이다. 같은 키 하나가 성격이 다른 두 부류에 닿기 때문이다.
+### 왜 `Shift+Enter` 가 아니라 `Ctrl+J` 인가
 
-- **콘솔 레코드를 그대로 읽는 쪽** (`codex` → crossterm): `wVirtualKeyCode` 를 본다.
-  `VK_RETURN` → `KeyCode::Enter`, `SHIFT_PRESSED` → `KeyModifiers::SHIFT`
-  (crossterm `event/sys/windows/parse.rs`). codex 안에서 그 이벤트는 제출 판정을 **빗나가고**
-  줄바꿈 판정에 **맞는다** — 제출은 `plain(Enter)` 하나뿐이고(`chat_composer.rs` 의 `submit_keys`),
-  줄바꿈 목록에는 `shift(Enter)` 가 들어 있다(`keymap.rs` 의 `editor.insert_newline`).
-  둘을 견주는 `normalize_key_parts` 는 `KeyCode::Char` 가 아닌 키의 수정자를 건드리지 않으므로
-  `(Enter, SHIFT)` 는 `(Enter, NONE)` 과 절대 같아지지 않는다(`key_hint.rs`).
+이 자리에서 고를 수 있는 키가 여럿인데, **클라이언트가 콘솔 레코드를 읽는지 VT 바이트를 읽는지에
+따라 결과가 갈린다.** 클라이언트가 `ENABLE_VIRTUAL_TERMINAL_INPUT` 을 켜 두면(`wsl.exe`·`ssh.exe`,
+Node 의 `RAW_VT` 모드 등) conhost 가 레코드를 **다시 VT 로 번역해서** 준다
+(`inputBuffer.cpp`: `if (vtInputMode) { _termInput.HandleKey(...) }`). 그 번역은 `UnicodeChar` 를
+보지 않고 가상 키만 본다(`terminalInput.cpp` 의 `case VK_RETURN`).
+
+| 보내는 키 | 레코드를 읽는 쪽 (`codex` → crossterm) | VT 로 번역되는 쪽 |
+| --- | --- | --- |
+| `Shift+Enter` | `(Enter, SHIFT)` → 줄바꿈 ✓ | `\r` → **제출** ✗ |
+| `Ctrl+Enter` · `Ctrl+Shift+Enter` | `(Enter, CTRL[, SHIFT])` → 아무것도 아님 ✗ | `\n` ✓ |
+| `Ctrl+M` | `(Char('m'), CTRL)` → 줄바꿈 ✓ | `\r` → **제출** ✗ |
+| **`Ctrl+J`** | `(Char('j'), CTRL)` → 줄바꿈 ✓ | `\n` ✓ |
+
+`Ctrl+J` 만 양쪽에서 줄바꿈이다.
+
+- **레코드를 읽는 쪽** (`codex` → crossterm): `VK_J` + `LEFT_CTRL_PRESSED` →
+  `KeyEvent{ Char('j'), CONTROL }`. crossterm 은 특수 키가 아닌 가상 키에 대해
+  `ToUnicodeEx(vk, sc, 수정자 없음)` 으로 "그 키의 맨 글자" 를 되찾으므로 `'j'` 가 나온다
+  (`event/sys/windows/parse.rs` 의 `get_char_for_key`). 그것이 codex 줄바꿈 목록의 첫 항목인
+  `ctrl(Char('j'))` 다(`keymap.rs` 의 `editor.insert_newline`). 제출은 `plain(Enter)` 하나뿐이라
+  (`chat_composer.rs` 의 `submit_keys`) 스칠 일이 없다.
   윈도우에서는 crossterm 의 `supports_keyboard_enhancement()` 가 늘 `Ok(false)` 라
   (`terminal/sys/windows.rs`: "This always returns `Ok(false)` on Windows") kitty 키보드
   프로토콜 길이 아예 막혀 있고, 이 길만 남는다.
-- **레코드를 다시 바이트로 펴는 쪽** (`claude` → Node/libuv, 그리고 `wsl.exe`·`ssh.exe`):
-  `UnicodeChar` 가 0 이 아니면 그 글자를 그대로 내보낸다(`libuv` 의 `uv_tty_read`).
-  그래서 예전과 똑같은 순수 LF 가 흘러가 `claude` 의 줄바꿈이 유지되고, WSL·SSH 안의 리눅스
-  `codex` 는 그 LF 를 `Ctrl+J`(=역시 줄바꿈 자리)로 읽는다.
+- **VT 로 번역되는 쪽** (`wsl.exe`·`ssh.exe` 등): `VK_J` 는 문자 키이고 Ctrl 이 눌려 있으므로
+  그 제어문자 `0x0a` 가 나간다 — 예전과 **똑같은** 순수 LF 다. WSL·SSH 안의 리눅스 `codex` 는
+  그 LF 를 다시 `Ctrl+J`(역시 줄바꿈 자리)로 읽는다.
+- **레코드를 바이트로 펴는 쪽** (`claude` → Node/libuv 의 `RAW` 모드): `UnicodeChar` 가 0 이
+  아니면 그 글자를 그대로 내보낸다(`uv_tty_read`). 여기에 LF 를 실어 두었으니 역시 LF 다.
+
+뗌까지 보내는 것도 이유가 있다. conhost 는 앞뒤로 붙은 같은 눌림 레코드를 하나로 합치면서
+`wRepeatCount` 만 올리는데(`inputBuffer.cpp` 의 `_CoalesceEvent`), crossterm 은 `wRepeatCount` 를
+보지 않아 레코드 하나당 이벤트 하나만 만든다. 사이에 뗌이 끼지 않으면 빠르게 두 번 누른 줄바꿈이
+한 번으로 삼켜진다. 뗌 자체는 어디에서도 글자를 만들지 않는다 — VT 번역은 뗌에서 곧바로 돌아가고
+(`terminalInput.cpp` 의 `if (!key.keyDown)`), codex 는 `KeyEventKind::Release` 를 거르고,
+libuv 는 뗌을 아예 무시한다.
 
 모드를 청하지 않은 상대에게는 win32 시퀀스를 들이밀지 않고 예전처럼 LF 한 바이트만 보낸다.
-LF 는 이미 아무 데서나(`vim`·`less`·`tmux` 의 대체 화면 포함) 통과하던 `Ctrl+J` 와 같은 바이트다.
 Claude Code 공식 `/terminal-setup` 이 쓰는 `ESC+CR`(메타+엔터) 관례는 쓰지 않는다 — `codex` 는
 그 조합을 그냥 제출로 읽는다.
 
-> LF 만 보내던 예전 방식이 윈도우에서 불안했던 까닭. ConPTY 는 C0 제어문자를
-> `VkKeyScanW` 로 되짚어 키 이벤트를 만드는데(`InputStateMachineEngine::_GenerateKeyFromChar`),
-> `'\n'` 에 대응하는 키가 자판에 없다. 그래서 클라이언트에게는 `Enter`+`Shift` 가 아니라
-> 가상 키와 수정자가 어긋난 이벤트가 도착하고, 그 뒤는 프로그램마다 다른 예비 경로에 맡겨진다 —
-> 되기도 하고 안 되기도 한다. win32-input-mode 는 그 되짚기를 아예 건너뛰고 **의도한 키 이벤트를
-> 그대로** 전한다. LF 는 이제 위 표의 `UnicodeChar` 자리에 남아, 바이트로 펴지는 쪽을 위한
-> 예비 경로 역할만 한다.
+> **왜 LF 만으로는 부족했나.** 보내려는 키가 결국 `Ctrl+J` 인데도 이 모드가 필요한 까닭은,
+> ConPTY 의 바이트→레코드 되짚기가 손실이 있기 때문이다. C0 제어문자는 `VkKeyScanW` 로 되짚어
+> 키를 찾는데(`InputStateMachineEngine::_GenerateKeyFromChar`), `'\n'` 에 대응하는 키가 자판에
+> 없다. 그래서 클라이언트에게는 `Ctrl+J` 가 아니라 **가상 키와 수정자가 어긋난 이벤트**가
+> 도착하고, 그 뒤는 프로그램마다 다른 예비 경로에 맡겨진다. 같은 키를 이 모드로 보내면 되짚기를
+> 건너뛰고 값이 그대로 전해진다.
 
 줄바꿈은 붙여넣기처럼 스크롤을 바닥으로 돌려놓는다 — 스크롤을 올려 둔 채 줄을 넣으면 xterm 이
 원래 하는 자동 스크롤을 우리가 가로채는 키 처리기가 건너뛰기 때문에, 우리가 대신 해 준다.
@@ -447,17 +476,23 @@ Claude Code 공식 `/terminal-setup` 이 쓰는 `ESC+CR`(메타+엔터) 관례�
 ### 하이퍼링크
 
 `OSC 8` 하이퍼링크와 평범한 글자 속 `http(s)` 주소를 **`Ctrl+클릭`** 으로 연다(윈도우 터미널과
-같은 규칙). 마우스를 올리면 **실제 주소**가 칩으로 뜬다.
+같은 규칙). **주 버튼**으로만 연다 — 우클릭(창 메뉴)·가운데 클릭(붙여넣기)에도 같은 처리기가
+불리기 때문이다. 마우스를 올리면 **실제 주소**가 칩으로 뜬다.
 
 조심할 것이 둘 있다.
 
-- xterm 은 `linkHandler` 를 주지 않으면 자기 기본 동작으로 물러나는데, 그것이 영어 `confirm()`
-  뒤 `window.open()` 과 `location.href = uri` 다(`browser/OscLinkProvider.ts`). 창이 하나뿐인
-  이 앱에서 `location.href` 는 **문서째로** 그 주소로 옮겨 가 열려 있던 터미널을 전부 없앤다.
-  그래서 처리기를 반드시 우리가 준다.
+- xterm 은 `linkHandler` 를 주지 않으면 자기 기본 동작(`OscLinkProvider.ts` 의
+  `defaultActivate`)으로 물러나는데, 그것은 ① 번역되지 않은 영어 `confirm()` 을 띄우고
+  ② 수정자를 요구하지 않아 지나가는 클릭에도 열리며 ③ `window.open()` 으로 연다. Tauri
+  웹뷰(WebView2)에서 그것이 무엇을 여는지는 앱이 정하지 않고, 무엇보다 우리 주소 검사를
+  지나지 않는다. 그래서 처리기를 반드시 우리가 준다.
 - 주소를 정하는 것은 화면 속 프로그램이고, `OSC 8` 은 **보이는 글자와 실제 주소를 따로 싣는다.**
   `ESC]8;;https://evil.tld ESC\ https://github.com ESC]8;; ESC\` 는 github 주소로 보이면서
   evil.tld 로 간다. 스킴 검사로는 못 잡으므로 `Ctrl` 을 요구하고 실제 주소를 눈에 보여 준다.
+
+넘기기 전에 화면 쪽에서 `new URL()` 로 ASCII 로 정규화한다 — xterm 은 한글 경로·IDN 호스트가 든
+주소도 링크로 내주는데(`OscLinkProvider.ts` 의 걸러내기도 `new URL()` 하나뿐이다) Rust 검사는
+ASCII 만 받아서, 그러지 않으면 눌러도 오류만 뜬다.
 
 실제 열기는 Rust(`commands/link.rs`)가 `http`·`https` 만 통과시킨 뒤 `explorer.exe <url>` 로 한다.
 다른 스킴은 윈도우의 임의 처리기로 이어진다(`ms-msdt:` · `search-ms:` · `shell:` · `file:`,
@@ -467,8 +502,8 @@ UNC 경로는 NTLM 을 흘린다). 셸을 거치지 않는 것도 의도다 — 
 ## 테스트
 
 ```bash
-cd src-tauri && cargo test --workspace   # 119개 — 레이아웃 대수 · 스냅샷 · PTY · VT 코어 · OSC 스캐너 · 셸 통합 · AI 감지 · 링크 검사
-pnpm test                                # 250개 — 마크다운 · IME · 편집 기록 · 이미지 · 병합/크기 드래그 · 클립보드 · 줄바꿈 · 스크롤 막대 · 배색 대비 · 하이퍼링크
+cd src-tauri && cargo test --workspace   # 122개 — 레이아웃 대수 · 스냅샷 · PTY · VT 코어 · OSC 스캐너 · 셸 통합 · AI 감지 · 링크 검사
+pnpm test                                # 255개 — 마크다운 · IME · 편집 기록 · 이미지 · 병합/크기 드래그 · 클립보드 · 줄바꿈 · 스크롤 막대 · 배색 대비 · 하이퍼링크
 ```
 
 `src-tauri/tests/terminal_pipeline.rs` 는 실제 ConPTY 를 띄워

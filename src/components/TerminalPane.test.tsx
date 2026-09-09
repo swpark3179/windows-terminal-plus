@@ -240,7 +240,7 @@ describe('win32-input-mode', () => {
   /** ConPTY 가 부팅하며 보내는 `CSI ? 9001 h`. */
   const askForWin32 = (term: ReturnType<typeof lastTerminal>) => term.emitCsi('?', 'h', [9001]);
 
-  it('ConPTY 가 청하면 Shift+Enter 를 진짜 키 이벤트로 보낸다 — codex 의 줄바꿈이 여기서 갈린다', async () => {
+  it('ConPTY 가 청하면 줄바꿈을 진짜 키 이벤트로 보낸다 — codex 의 줄바꿈이 여기서 갈린다', async () => {
     const { term, press } = mount();
     expect(askForWin32(term)).toBe(true);
 
@@ -248,8 +248,12 @@ describe('win32-input-mode', () => {
     await waitFor(() =>
       expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: WIN32_NEWLINE }),
     );
-    // Vk=VK_RETURN · Sc=0x1c · Uc=LF · Kd=1 · Cs=SHIFT_PRESSED.
-    expect(WIN32_NEWLINE).toBe('\x1b[13;28;10;1;16_');
+  });
+
+  it('보내는 것은 Ctrl+J 눌림·뗌 한 쌍이다 — 어느 클라이언트에서도 줄바꿈인 유일한 키', () => {
+    // Vk=VK_J(0x4a) · Sc=0x24 · Uc=LF · Cs=LEFT_CTRL_PRESSED. 뗌이 있어야 conhost 가
+    // 연속 눌림을 wRepeatCount 로 합쳐 버리지 않는다.
+    expect(WIN32_NEWLINE).toBe('\x1b[74;36;10;1;8_\x1b[74;36;10;0;8_');
   });
 
   it('끄라고 하면 예전의 LF 로 돌아간다', async () => {
@@ -301,9 +305,23 @@ describe('스크롤백 조작', () => {
     expect(term.selectedAll).toBe(1);
 
     expect(press({ key: 'K', ctrlKey: true, shiftKey: true })).toBe(false);
-    expect(term.clearedBuffer).toBe(1);
-    // Rust 버퍼도 함께 비워야 세션을 다녀왔을 때 되살아나지 않는다.
+    // 화면과 Rust 코어에 **같은 시퀀스**를 먹인다 — 그래야 두 버퍼가 갈라지지 않는다.
+    expect(term.written).toContain('\x1b[H\x1b[2J\x1b[3J');
     await waitFor(() => expect(backend.lastArgs('pty_clear')).toEqual({ paneId: 'p-term' }));
+  });
+
+  it('대체 화면에서는 버퍼를 비우지 않는다 — claude·codex 가 그려 둔 화면을 지워 버린다', () => {
+    const { term, press } = mount();
+    term.buffer.active.type = 'alternate';
+    const written = term.written.length;
+    // `backend.calls` 는 파일 안에서 누적되므로 이 테스트가 늘린 만큼만 본다.
+    const cleared = () => backend.calls.filter((c) => c === 'pty_clear').length;
+    const before = cleared();
+
+    expect(press({ key: 'K', ctrlKey: true, shiftKey: true })).toBe(false);
+
+    expect(term.written.length).toBe(written);
+    expect(cleared()).toBe(before);
   });
 
   it('Shift 없는 Ctrl+A · Ctrl+K 는 셸의 것이다 — 줄 처음 이동과 줄 끝 지우기', () => {

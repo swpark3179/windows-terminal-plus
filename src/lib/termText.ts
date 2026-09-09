@@ -31,7 +31,11 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
  * 빈 문자열이 나오면(전부 제어문자였다면) 호출부가 원래 값을 그대로 두면 된다.
  */
 export function sanitizeTerminalText(raw: string, max: number = MAX_TERM_TEXT): string {
-  const flat = raw.replace(CONTROL, ' ').replace(BIDI, '').replace(/\s+/g, ' ').trim();
+  // **훑기 전에 먼저 자른다.** 값의 길이를 정하는 것은 화면 속 프로그램이고 xterm 의 OSC 상한은
+  // 천만 글자다. 통째로 정규식 세 번을 돌리면 그동안 웹뷰가 멈춘다. 넉넉한 배수만큼만 떠서
+  // 훑으면 "전부 제어문자였다" 같은 경우도 그대로 살면서 일의 양이 상한 안에 갇힌다.
+  const head = raw.length > max * 8 ? raw.slice(0, max * 8) : raw;
+  const flat = head.replace(CONTROL, ' ').replace(BIDI, '').replace(/\s+/g, ' ').trim();
   if (flat.length <= max) return flat;
   // 자른 자리를 알 수 있게 표시한다 — 잘린 주소를 온전한 것으로 착각하지 않도록.
   return `${flat.slice(0, max - 1)}…`;

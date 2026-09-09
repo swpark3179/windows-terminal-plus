@@ -121,8 +121,8 @@ export const savePane = (sessionId: string, paneId: string) =>
 /**
  * 터미널이 그린 주소를 OS 기본 브라우저로 넘긴다.
  *
- * 웹뷰에서 `window.open` 이나 `location.href` 로 열면 창이 하나뿐인 이 앱에서는 문서 자체가
- * 그 주소로 옮겨 가 모든 창이 사라진다. 검사도 Rust 에서 한다 (`commands/link.rs`).
+ * 웹뷰의 `window.open` 은 Tauri(WebView2)에서 무엇을 열지 앱이 정하지 않는다 — 막히거나 앱이
+ * 다루지 않는 팝업이 뜬다. 주소 검사도 Rust 에서 한다 (`commands/link.rs`).
  */
 export const openExternalUrl = (url: string) => invoke<void>('link_open', { url });
 

@@ -4,10 +4,15 @@
  * ## 왜 손으로 배선해야 하는가
  *
  * xterm 은 OSC 8 하이퍼링크를 **이미** 알아듣고 클릭할 수 있게 만들어 둔다. `linkHandler` 를
- * 주지 않으면 자기 기본 동작으로 물러나는데, 그것이 영어 `confirm()` 한 번 띄운 뒤
- * `window.open()` 과 `location.href = uri` 를 쓴다(`browser/OscLinkProvider.ts`).
- * 창이 하나뿐인 이 앱에서 `location.href` 는 **문서 자체를 그 주소로 옮긴다** — 열려 있던 터미널이
- * 전부 사라진다. 그래서 처리기를 반드시 우리가 준다.
+ * 주지 않으면 자기 기본 동작(`browser/OscLinkProvider.ts` 의 `defaultActivate`)으로 물러나는데,
+ * 그것으로는 셋이 어긋난다.
+ *
+ * 1. **영어 `confirm()`** 한 번을 띄운다 — 한국어 UI 에 번역되지 않은 브라우저 대화상자다.
+ * 2. **수정자를 요구하지 않는다** — 화면에 찍힌 주소를 지나가다 한 번 누르면 그대로 열린다.
+ *    주소를 정하는 것은 화면 속 프로그램이므로(`cat evil.bin`) 그래서는 안 된다.
+ * 3. `window.open()` 뒤 그 창의 `location.href` 를 쓴다. Tauri 웹뷰(WebView2)에서 그것이 무엇을
+ *    여는지는 앱이 정하지 않는다 — 막히거나, 앱이 다루지 않는 팝업 웹뷰가 뜬다. 터미널이 여는
+ *    주소는 OS 기본 브라우저로 가야 하고, 그 길에는 우리 검사(`commands/link.rs`)가 있어야 한다.
  *
  * ## 안전 규칙
  *
@@ -71,14 +76,27 @@ export function createTermLinks(deps: {
   };
 
   const activate = (event: MouseEvent | undefined, uri: string) => {
+    // 주 버튼이 아니면 링크 클릭이 아니다. 우클릭(창 메뉴)·가운데 클릭(붙여넣기)에도 이 처리기가
+    // 불리므로, 걸러 내지 않으면 그 두 조작마다 엉뚱한 안내가 뜬다.
+    if (!event || event.button !== 0) return;
     // Ctrl 없이 눌렀다면 열지 않는다. 이 주소는 화면에 찍힌 것이므로 사용자가 의도한 클릭이라는
     // 보장이 없다 — 마침 그 자리를 눌렀을 수도 있다.
-    if (!event?.ctrlKey) {
+    if (!event.ctrlKey) {
       deps.flash('Ctrl + 클릭으로 브라우저에서 엽니다');
       return;
     }
+    // ASCII 로 정규화해서 넘긴다. xterm 은 `new URL()` 로만 걸러서 한글 경로·IDN 호스트가 든
+    // 주소도 링크로 내주는데, Rust 검사는 ASCII 만 받는다 — 여기서 퍼센트 인코딩·퓨니코드로
+    // 바꿔 두지 않으면 눌러도 오류 토스트만 뜬다.
+    let normalized: string;
+    try {
+      normalized = new URL(uri).href;
+    } catch {
+      deps.flash('주소를 읽을 수 없습니다');
+      return;
+    }
     hideChip();
-    deps.open(uri).catch((e: unknown) => {
+    deps.open(normalized).catch((e: unknown) => {
       deps.flash(typeof e === 'string' ? e : '주소를 열 수 없습니다');
     });
   };
