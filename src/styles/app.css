@@ -928,6 +928,39 @@ button {
   overflow: hidden;
 }
 
+/*
+ * 벨(BEL) — 소리 대신 테두리를 한 번 밝힌다.
+ *
+ * xterm 5.5 에는 벨 표시가 아예 없어서 탭 완성이 모호할 때도 vim 검색이 실패할 때도 완전히
+ * 조용했다. 창이 여럿인 앱에서 소리는 어느 창인지 알려 주지 못하므로 그 창만 밝힌다.
+ */
+.term-body--bell {
+  box-shadow: inset 0 0 0 2px var(--term-accent);
+}
+
+/*
+ * 링크 위에 뜨는 실제 주소.
+ *
+ * OSC 8 은 보이는 글자와 실제 주소를 따로 싣기 때문에, 화면 글자만으로는 어디로 가는지 알 수 없다.
+ * `pointer-events: none` 이라 칩이 링크를 가로막지 않는다 (가리면 곧바로 leave 가 불린다).
+ */
+.term-link-chip {
+  position: absolute;
+  z-index: 11;
+  max-width: calc(100% - 12px);
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--term-head-line);
+  background: var(--term-head);
+  color: var(--term-title);
+  font: 400 11px/1.4 var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  box-shadow: 0 3px 10px rgb(0 0 0 / 45%);
+}
+
 /* xterm 이 자기 DOM 을 붙이는 노드. 막대와 한 노드를 다투지 않도록 따로 둔다. */
 .term-host {
   height: 100%;

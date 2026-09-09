@@ -10,14 +10,24 @@
  * 새 세션(Ctrl+Shift+T)은 윈도우 터미널의 "새 탭" 과 같은 자리다. Shift 없는 Ctrl+T 는
  * readline 의 transpose-chars 라 그대로 셸에 넘긴다.
  *
+ * 저장은 Ctrl+Shift+S 로 옮겼다. Shift 없는 Ctrl+S 는 터미널이 관찰할 수 있는 진짜 키다
+ * (0x13 · XOFF · readline 의 정방향 검색)  — 앱이 가져가 버리면 셸에서 그 키가 죽는다.
+ * 터미널 밖(에디터 패널)에서는 이 관문을 지나지 않으므로 Ctrl+S 가 그대로 듣는다.
+ *
+ * `Ctrl+Shift+<글자>` 는 xterm 이 어떤 바이트도 내보내지 않는 조합이라(`common/input/Keyboard.ts`
+ * 의 ctrl 분기는 `!shiftKey` 를 요구한다) 셸에서 빼앗을 것이 없다. 그래서 앱·터미널 조작을
+ * 여기에 모은다.
+ *
  * 복사·붙여넣기 조합은 **여기 넣지 않는다.** 선택 영역이 있는지 알아야 판정이 갈리므로
  * 터미널 안(`terminalKeyAction`)에서 풀고, 전역 처리기는 지금처럼 모르는 채로 둔다.
  */
 export function appOwnsKey(e: KeyboardEvent): boolean {
   if (!e.ctrlKey) return false;
   const k = keyName(e);
-  if (e.shiftKey) return k === 'p' || k === 'b' || k === 'e' || k === 'f' || k === 't';
-  return k === ',' || k === 's' || k === '+' || k === '=' || k === '-' || k === '0';
+  if (e.shiftKey) {
+    return k === 'p' || k === 'b' || k === 'e' || k === 'f' || k === 't' || k === 's';
+  }
+  return k === ',' || k === '+' || k === '=' || k === '-' || k === '0';
 }
 
 /** 지금 포커스가 터미널 안에 있는가. */
@@ -32,7 +42,14 @@ export function terminalFocused(): boolean {
  * `copy-if-selection` 은 윈도우 터미널의 Ctrl+C 다 — 선택이 있으면 복사, 없으면 셸로 보내
  * 실행 중인 명령을 끊는다. 선택 여부는 이 함수가 알 수 없으므로 호출부가 판정한다.
  */
-export type TerminalKeyAction = 'copy' | 'paste' | 'copy-if-selection' | 'newline' | null;
+export type TerminalKeyAction =
+  | 'copy'
+  | 'paste'
+  | 'copy-if-selection'
+  | 'newline'
+  | 'select-all'
+  | 'clear'
+  | null;
 
 /** 이벤트에서 실제로 읽는 값만 추린 모양 — 테스트에서 평범한 객체로 부를 수 있다. */
 export type KeyLike = Pick<KeyboardEvent, 'type' | 'key' | 'ctrlKey' | 'shiftKey' | 'altKey'> & {
@@ -83,7 +100,12 @@ export function terminalKeyAction(e: KeyLike): TerminalKeyAction {
   if (k === 'enter' && (e.ctrlKey || e.shiftKey)) return 'newline';
 
   if (!e.ctrlKey) return null;
-  if (e.shiftKey) return k === 'c' ? 'copy' : k === 'v' ? 'paste' : null;
+  if (e.shiftKey) {
+    // 윈도우 터미널의 "모두 선택"·"버퍼 비우기". 셸이 볼 수 없는 조합이라 안전하게 가져간다.
+    if (k === 'a') return 'select-all';
+    if (k === 'k') return 'clear';
+    return k === 'c' ? 'copy' : k === 'v' ? 'paste' : null;
+  }
   if (k === 'c') return 'copy-if-selection';
   if (k === 'v') return 'paste';
   return null;

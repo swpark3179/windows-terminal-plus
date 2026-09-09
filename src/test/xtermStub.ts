@@ -39,6 +39,8 @@ export class StubTerminal {
   private _scroll = emitter<number>();
   private _resize = emitter<{ cols: number; rows: number }>();
   private _bufferChange = emitter<unknown>();
+  private _title = emitter<string>();
+  private _bell = emitter<void>();
 
   buffer = {
     active: { type: 'normal' as 'normal' | 'alternate', baseY: 0, viewportY: 0 },
@@ -59,6 +61,10 @@ export class StubTerminal {
   scrolledLines: number[] = [];
   /** `scrollPages()` 가 받은 값들. */
   scrolledPages: number[] = [];
+  /** `selectAll()` 이 불린 횟수. */
+  selectedAll = 0;
+  /** `clear()` 가 불린 횟수. */
+  clearedBuffer = 0;
   keyHandler: ((e: KeyboardEvent) => boolean) | null = null;
 
   /** 등록된 CSI 처리기 — 테스트가 시퀀스 도착을 흉내 낼 수 있게 붙잡아 둔다. */
@@ -80,7 +86,9 @@ export class StubTerminal {
     },
   };
 
-  constructor() {
+  constructor(options: Record<string, unknown> = {}) {
+    // 생성자에 넘긴 값을 그대로 들고 있는다 — 배색·글꼴·링크 처리기를 넘겼는지 검사할 수 있게.
+    this.options = { ...options };
     StubTerminal.last = this;
   }
 
@@ -100,6 +108,14 @@ export class StubTerminal {
   clearSelection() {
     this.cleared += 1;
     this.selection = '';
+  }
+
+  selectAll() {
+    this.selectedAll += 1;
+  }
+
+  clear() {
+    this.clearedBuffer += 1;
   }
 
   paste(data: string) {
@@ -142,6 +158,14 @@ export class StubTerminal {
     return this._resize.on(fn);
   }
 
+  onTitleChange(fn: (v: string) => void) {
+    return this._title.on(fn);
+  }
+
+  onBell(fn: () => void) {
+    return this._bell.on(fn);
+  }
+
   // ── 테스트가 터미널 쪽 변화를 흉내 낼 손잡이들 ──────────────
 
   /** 스크롤백이 자라거나 보는 자리가 바뀐 상황. 실제 xterm 처럼 `onRender` 로 알린다. */
@@ -179,6 +203,16 @@ export class StubTerminal {
       if (h.cb(params) === true) return true;
     }
     return false;
+  }
+
+  /** 셸이 OSC 0/2 로 창 제목을 알린 상황. */
+  emitTitle(title: string) {
+    this._title.fire(title);
+  }
+
+  /** 프로그램이 BEL 을 찍은 상황. */
+  emitBell() {
+    this._bell.fire();
   }
 
   /** 배율·창 크기가 바뀌어 줄 수가 달라진 상황. */

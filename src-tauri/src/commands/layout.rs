@@ -3,7 +3,7 @@
 //! 판정은 전부 `rterm-core` 가 한다. 프론트엔드는 드래그 중에도
 //! `layout_merge_check` 를 불러 같은 규칙을 그대로 본다 — 규칙이 두 벌 존재하지 않는다.
 
-use rterm_core::{layout, MergeVerdict, PaneKind, Snapshot, SplitDir, TrackAxis};
+use rterm_core::{layout, MergeVerdict, Snapshot, SplitDir, TrackAxis};
 use serde::Serialize;
 use tauri::State;
 

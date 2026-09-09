@@ -25,7 +25,15 @@ vi.mock('@xterm/xterm', async () => {
 });
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('@xterm/addon-unicode11', () => ({ Unicode11Addon: class {} }));
-vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class {
+    onContextLoss() {
+      return { dispose() {} };
+    }
+    dispose() {}
+  },
+}));
+vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
 vi.mock('@xterm/addon-clipboard', () => ({ ClipboardAddon: class {}, Base64: class {} }));
 
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
@@ -37,6 +45,7 @@ import { MAX_PASTE_CHARS } from '../lib/clipboard';
 import { MIN_THUMB_PX } from '../lib/scrollbar';
 import { WHEEL_CAP_PER_FRAME } from '../lib/termWheel';
 import { terminalClipboard } from '../lib/terminalRegistry';
+import { useStore } from '../state/store';
 import { WIN32_NEWLINE, resetWin32InputModes } from '../lib/win32Input';
 import type { Pane } from '../state/types';
 
@@ -281,6 +290,97 @@ describe('win32-input-mode', () => {
     expect(term.csiHandlers.length).toBe(2);
     view.unmount();
     expect(term.csiHandlers.length).toBe(0);
+  });
+});
+
+describe('스크롤백 조작', () => {
+  it('Ctrl+Shift+A 는 모두 선택, Ctrl+Shift+K 는 버퍼 비우기다', () => {
+    const { term, press } = mount();
+
+    expect(press({ key: 'A', ctrlKey: true, shiftKey: true })).toBe(false);
+    expect(term.selectedAll).toBe(1);
+
+    expect(press({ key: 'K', ctrlKey: true, shiftKey: true })).toBe(false);
+    expect(term.clearedBuffer).toBe(1);
+  });
+
+  it('Shift 없는 Ctrl+A · Ctrl+K 는 셸의 것이다 — 줄 처음 이동과 줄 끝 지우기', () => {
+    const { term, press } = mount();
+    expect(press({ key: 'a', ctrlKey: true })).toBe(true);
+    expect(press({ key: 'k', ctrlKey: true })).toBe(true);
+    expect(term.selectedAll).toBe(0);
+    expect(term.clearedBuffer).toBe(0);
+  });
+
+  it('Ctrl+S 는 셸로 간다 — 앱이 가져가면 XOFF·정방향 검색이 죽는다', () => {
+    const { press } = mount();
+    expect(press({ key: 's', ctrlKey: true })).toBe(true);
+  });
+});
+
+describe('창 제목', () => {
+  it('셸이 OSC 0/2 로 알려 준 제목을 스토어에 싣는다', () => {
+    const { term } = mount();
+    term.emitTitle('claude — rterm');
+    expect(useStore.getState().liveTitles[PANE.id]).toBe('claude — rterm');
+  });
+
+  it('제어문자·방향 전환 문자를 다듬어 넣는다 — 값을 정하는 것은 화면 속 프로그램이다', () => {
+    const { term } = mount();
+    term.emitTitle('두\n줄\u202e짜리');
+    expect(useStore.getState().liveTitles[PANE.id]).toBe('두 줄짜리');
+  });
+
+  it('알맹이가 없는 제목은 무시한다 — 원래 제목이 남아야 한다', () => {
+    const { term } = mount();
+    term.emitTitle('pwsh');
+    term.emitTitle('\u0000 \u202e');
+    expect(useStore.getState().liveTitles[PANE.id]).toBe('pwsh');
+  });
+});
+
+describe('벨', () => {
+  it('BEL 이 오면 창 테두리를 잠깐 밝힌다 — xterm 5.5 에는 벨 표시가 없다', () => {
+    vi.useFakeTimers();
+    try {
+      const { view, term } = mount();
+      const body = view.container.querySelector('.term-body') as HTMLElement;
+      expect(body.classList.contains('term-body--bell')).toBe(false);
+
+      term.emitBell();
+      expect(body.classList.contains('term-body--bell')).toBe(true);
+
+      vi.advanceTimersByTime(1000);
+      expect(body.classList.contains('term-body--bell')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('벨이 연달아 와도 깜빡이지 않는다 — 켜진 상태를 늘린다', () => {
+    vi.useFakeTimers();
+    try {
+      const { view, term } = mount();
+      const body = view.container.querySelector('.term-body') as HTMLElement;
+      term.emitBell();
+      vi.advanceTimersByTime(100);
+      term.emitBell();
+      vi.advanceTimersByTime(100);
+      expect(body.classList.contains('term-body--bell')).toBe(true);
+      vi.advanceTimersByTime(1000);
+      expect(body.classList.contains('term-body--bell')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('하이퍼링크', () => {
+  it('xterm 에 우리 처리기를 넘긴다 — 기본 동작은 문서째로 주소를 열어 버린다', () => {
+    const { term } = mount();
+    const handler = term.options.linkHandler as { activate?: unknown; hover?: unknown } | undefined;
+    expect(typeof handler?.activate).toBe('function');
+    expect(typeof handler?.hover).toBe('function');
   });
 });
 

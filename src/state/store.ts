@@ -67,6 +67,14 @@ interface AppState {
   confirm: ConfirmRequest | null;
   /** 경계를 끄는 동안의 임시 트랙 몫. 손을 떼면 Rust 로 넘어간다. */
   resizeDraft: { axis: TrackAxis; weights: number[] } | null;
+  /**
+   * 셸이 OSC 0/2 로 알려 준 창별 제목. 창 머리글이 이것을 먼저 쓴다.
+   *
+   * 스냅샷에 남기지 않는다 — 다음 실행에서는 셸이 다시 알려 주고, 그때까지는 셸 이름
+   * (`pwsh · 새 터미널`)이 맞는 표시다. 반대로 세션을 오가는 동안에는 **지우지 않는다**:
+   * 셸은 계속 살아 있지만 다시 붙을 때 재생되는 스크롤백에는 OSC 가 들어 있지 않다.
+   */
+  liveTitles: Record<string, string>;
 
   // ── 액션 ────────────────────────────────────
   boot: () => Promise<void>;
@@ -129,6 +137,7 @@ interface AppState {
   setFileDrop: (on: boolean) => void;
   setConfirm: (request: ConfirmRequest | null) => void;
   setResizeDraft: (draft: { axis: TrackAxis; weights: number[] } | null) => void;
+  setLiveTitle: (paneId: string, title: string) => void;
   resetTrackWeights: () => Promise<void>;
   closeOverlays: () => void;
 }
@@ -169,6 +178,7 @@ export const useStore = create<AppState>((set, get) => ({
   fileDrop: false,
   confirm: null,
   resizeDraft: null,
+  liveTitles: {},
 
   boot: async () => {
     const boot = await api.bootApp();
@@ -381,6 +391,11 @@ export const useStore = create<AppState>((set, get) => ({
     if (!snapshot) return;
     await guard(async () => {
       apply(await api.closePane(snapshot.activeId, paneId));
+      // 셸이 알려 준 제목도 함께 잊는다 — 그 창은 이제 빈 블럭이다.
+      set((s) => {
+        const { [paneId]: _gone, ...rest } = s.liveTitles;
+        return { liveTitles: rest };
+      });
       flash('창을 닫아 빈 블럭으로');
     }, flash);
   },
@@ -574,6 +589,9 @@ export const useStore = create<AppState>((set, get) => ({
   setFileDrop: (fileDrop) => set({ fileDrop }),
   setConfirm: (confirm) => set({ confirm }),
   setResizeDraft: (resizeDraft) => set({ resizeDraft }),
+
+  setLiveTitle: (paneId, title) =>
+    set((s) => (s.liveTitles[paneId] === title ? s : { liveTitles: { ...s.liveTitles, [paneId]: title } })),
 
   resetTrackWeights: async () => {
     const { snapshot, flash, apply } = get();

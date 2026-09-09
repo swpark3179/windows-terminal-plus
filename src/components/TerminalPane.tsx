@@ -3,12 +3,14 @@ import { listen } from '@tauri-apps/api/event';
 import { Base64, ClipboardAddon, type ClipboardSelectionType } from '@xterm/addon-clipboard';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 
 import {
   Channel,
   detachPty,
+  openExternalUrl,
   openPty,
   readClipboardText,
   resizePty,
@@ -22,6 +24,8 @@ import {
   sanitizePasteText,
 } from '../lib/clipboard';
 import { appOwnsKey, terminalKeyAction } from '../lib/keys';
+import { createTermLinks } from '../lib/termLinks';
+import { sanitizeTerminalText } from '../lib/termText';
 import { TERM_THEME, WORD_SEPARATOR } from '../lib/termTheme';
 import { registerTerminalClipboard, terminalClipboard } from '../lib/terminalRegistry';
 import { WIN32_INPUT_MODE, newlineSequence, setWin32InputMode } from '../lib/win32Input';
@@ -37,8 +41,13 @@ import { TerminalScrollbar } from './TerminalScrollbar';
  */
 const SYSTEM_SELECTION = 'c' as ClipboardSelectionType;
 
+/** 벨을 화면으로 알리는 시간(ms). 소리는 내지 않는다 — 창이 여럿인 앱에서 어느 창인지 알 수 없다. */
+const BELL_FLASH_MS = 140;
+
 export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  /** 벨을 알릴 곳 — 창의 눈에 보이는 테두리는 `.term-body` 다. */
+  const bodyRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   // 스크롤 막대에 넘겨줄 인스턴스. ref 로는 막대가 붙을 때를 알 수 없어 상태로도 들고 있는다.
@@ -52,6 +61,14 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
 
     let disposed = false;
     const flash = (msg: string) => useStore.getState().flash(msg);
+
+    // 하이퍼링크. `term` 이 아직 없으므로 칩을 붙일 곳은 나중에 읽는다 (마우스를 올릴 때 불린다).
+    let live: Terminal | null = null;
+    const links = createTermLinks({
+      element: () => live?.element,
+      flash,
+      open: openExternalUrl,
+    });
 
     const term = new Terminal({
       allowProposedApi: true,
@@ -73,6 +90,9 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       scrollback: 8192,
       theme: TERM_THEME,
       wordSeparator: WORD_SEPARATOR,
+      // 주지 않으면 xterm 이 자기 기본 동작(영어 confirm + `location.href`)으로 물러난다 —
+      // 창이 하나뿐인 이 앱에서는 문서째로 옮겨 가 모든 터미널이 사라진다 (`lib/termLinks.ts`).
+      linkHandler: links.handler,
       // 한글 등 넓은 글자의 칸 수를 정확히 세도록 unicode 11 표를 쓴다.
       windowsPty: { backend: 'conpty' },
     });
@@ -105,12 +125,28 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, win32Mode(false)),
     ];
 
+    live = term;
     term.open(host);
     try {
-      term.loadAddon(new WebglAddon());
+      const webgl = new WebglAddon();
+      // 절전에서 깨거나 드라이버가 갱신되면 GPU 컨텍스트가 날아간다. 그대로 두면 셸은 계속
+      // 도는데 화면만 옛 글자로 얼어붙는다. xterm 이 안내하는 처리는 애드온을 떼는 것뿐 —
+      // 그러면 DOM 렌더러로 돌아가 다시 그려진다.
+      webgl.onContextLoss(() => {
+        webgl.dispose();
+        flash('그래픽 컨텍스트를 잃어 기본 렌더러로 돌아갔습니다');
+      });
+      term.loadAddon(webgl);
     } catch {
-      // WebGL 이 없으면 기본 DOM 렌더러로 조용히 물러난다.
+      // WebGL 이 아예 없으면 기본 DOM 렌더러로 조용히 물러난다.
     }
+
+    // 평범한 글자 속 주소도 윈도우 터미널처럼 누를 수 있게 한다 (OSC 8 은 xterm 이 이미 안다).
+    // 찾는 규칙은 애드온 기본값을 그대로 쓴다 — http·https 만 잡고 문장 끝 구두점을 떼 준다
+    // (`WebLinksAddon.ts` 의 `strictUrlRegex`). 우리가 다시 쓰면 localhost 같은 것을 놓친다.
+    term.loadAddon(
+      new WebLinksAddon(links.activate, { hover: links.hover, leave: links.leave }),
+    );
     fit.fit();
 
     termRef.current = term;
@@ -175,6 +211,12 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
             // 스크롤을 올려 둔 채 claude·codex 에 붙여넣으면 방금 넣은 게 화면 밖에 남는다.
             term.scrollToBottom();
             pasteClipboard();
+          } else if (action === 'select-all') {
+            term.selectAll();
+          } else if (action === 'clear') {
+            // 윈도우 터미널의 "버퍼 지우기" — 보이는 화면은 남기고 스크롤백만 버린다.
+            term.clear();
+            flash('스크롤백을 비웠습니다');
           } else if (action === 'newline') {
             // ConPTY 가 win32-input-mode 를 청했으면 진짜 Shift+Enter 키 이벤트로, 아니면 예전처럼
             // 순수 LF 로 보낸다. 어느 쪽이든 바이트로 펴지는 곳에는 LF 가 닿는다 (`lib/win32Input.ts`).
@@ -192,6 +234,25 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     // 키 입력 → PTY. (ConPTY 의 커서 위치 질의도 xterm 이 여기로 답한다.)
     const dataSub = term.onData((d) => void writePty(pane.id, d).catch(() => {}));
     const binarySub = term.onBinary((d) => void writePty(pane.id, d).catch(() => {}));
+
+    // 셸이 OSC 0/2 로 알려 주는 제목을 창 머리글에 그대로 싣는다 — 지금 무엇이 도는지가 보인다.
+    // 값은 프로그램이 정하므로 반드시 다듬어 넣는다 (`lib/termText.ts`).
+    const titleSub = term.onTitleChange((raw) => {
+      if (disposed) return;
+      const clean = sanitizeTerminalText(raw);
+      if (clean) useStore.getState().setLiveTitle(pane.id, clean);
+    });
+
+    // 벨. xterm 5.5 에는 벨 표시가 아예 없어 지금까지 완전히 조용했다 (탭 완성 모호, 검색 실패…).
+    let bellTimer: ReturnType<typeof setTimeout> | undefined;
+    const bellSub = term.onBell(() => {
+      const body = bodyRef.current;
+      if (disposed || !body) return;
+      body.classList.add('term-body--bell');
+      clearTimeout(bellTimer);
+      // 벨이 연달아 오면 깜빡이지 않고 켜진 상태를 늘린다.
+      bellTimer = setTimeout(() => body.classList.remove('term-body--bell'), BELL_FLASH_MS);
+    });
 
     // PTY → 화면. rAF 로 모아 써서 대량 출력에도 프레임을 지킨다.
     const queue: Uint8Array[] = [];
@@ -264,12 +325,18 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       observer.disconnect();
       dataSub.dispose();
       binarySub.dispose();
+      titleSub.dispose();
+      bellSub.dispose();
+      clearTimeout(bellTimer);
+      bodyRef.current?.classList.remove('term-body--bell');
+      links.dispose();
       modeHandlers.forEach((h) => h.dispose());
       unregisterClipboard();
       void exitPromise.then((un) => un());
       // 세션을 옮기는 것뿐일 수 있으므로 셸은 죽이지 않고 채널만 뗀다.
       void detachPty(pane.id).catch(() => {});
       term.dispose();
+      live = null;
       termRef.current = null;
       fitRef.current = null;
       setTerminal(null);
@@ -295,6 +362,7 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
   return (
     <div
       className="term-body"
+      ref={bodyRef}
       onMouseDown={(e) => {
         // 편집 모드의 드래그를 방해하지 않도록 선택 조작만 흘려보낸다.
         if (useStore.getState().editMode) {

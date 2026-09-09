@@ -39,12 +39,21 @@ vi.mock('@xterm/xterm', async () => {
 });
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('@xterm/addon-unicode11', () => ({ Unicode11Addon: class {} }));
-vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class {
+    onContextLoss() {
+      return { dispose() {} };
+    }
+    dispose() {}
+  },
+}));
+vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
 vi.mock('@xterm/addon-clipboard', () => ({ ClipboardAddon: class {}, Base64: class {} }));
 
 import { App } from './App';
 import { terminalFocused } from './lib/keys';
 import { useStore } from './state/store';
+import { lastTerminal } from './test/xtermStub';
 import {
   EMPTY_PANE,
   NEW_SESSION,
@@ -78,6 +87,7 @@ function resetStore() {
     fileDrop: false,
     confirm: null,
     resizeDraft: null,
+    liveTitles: {},
     query: '',
   });
 }
@@ -135,6 +145,22 @@ describe('앱 껍데기', () => {
     expect(screen.getByText('▮ 터미널 열기')).toBeInTheDocument();
     expect(screen.getByText('◫ 파일 열기')).toBeInTheDocument();
     expect(screen.getByText('파일을 이 블럭으로 드래그해도 열립니다')).toBeInTheDocument();
+  });
+});
+
+describe('창 제목', () => {
+  it('셸이 알려 준 제목이 창 머리글에 나타난다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    const head = () => paneEl(TERM_PANE).querySelector('.pane__title')!;
+    expect(head().textContent).toBe('pwsh · 새 터미널');
+
+    act(() => lastTerminal().emitTitle('claude — rterm'));
+
+    await waitFor(() => expect(head().textContent).toBe('claude — rterm'));
+    // 툴팁도 같은 값을 보여 준다 (잘려도 마우스를 올려 전체를 볼 수 있게).
+    expect(head().getAttribute('title')).toBe('claude — rterm');
   });
 });
 

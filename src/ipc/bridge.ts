@@ -111,6 +111,15 @@ export const setPaneContent = (sessionId: string, paneId: string, content: strin
 export const savePane = (sessionId: string, paneId: string) =>
   invoke<SaveResult>('pane_save', { sessionId, paneId });
 
+// ── 하이퍼링크 ───────────────────────────────────────────
+/**
+ * 터미널이 그린 주소를 OS 기본 브라우저로 넘긴다.
+ *
+ * 웹뷰에서 `window.open` 이나 `location.href` 로 열면 창이 하나뿐인 이 앱에서는 문서 자체가
+ * 그 주소로 옮겨 가 모든 창이 사라진다. 검사도 Rust 에서 한다 (`commands/link.rs`).
+ */
+export const openExternalUrl = (url: string) => invoke<void>('link_open', { url });
+
 // ── 클립보드 ─────────────────────────────────────────────
 //
 // 웹뷰의 `navigator.clipboard` 는 WebView2 에서 권한·사용자 제스처 사정으로 조용히 실패한다.

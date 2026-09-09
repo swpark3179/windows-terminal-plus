@@ -65,6 +65,7 @@ pub fn run() {
             commands::files::pane_open_file,
             commands::files::pane_set_content,
             commands::files::pane_save,
+            commands::link::link_open,
         ])
         .build(tauri::generate_context!())
         .expect("rterm 을 시작할 수 없습니다")
