@@ -65,6 +65,14 @@ describe('terminalKeyAction', () => {
     expect(terminalKeyAction(key({ key: '.', code: 'KeyV', ctrlKey: true }))).toBeNull();
   });
 
+  it('Ctrl+Shift+A 는 모두 선택, Ctrl+Shift+K 는 버퍼 비우기 — 셸이 볼 수 없는 조합이다', () => {
+    expect(terminalKeyAction(key({ key: 'A', ctrlKey: true, shiftKey: true }))).toBe('select-all');
+    expect(terminalKeyAction(key({ key: 'K', ctrlKey: true, shiftKey: true }))).toBe('clear');
+    // Shift 가 없으면 둘 다 셸의 것이다 (Ctrl+A 는 줄 처음, Ctrl+K 는 줄 끝까지 지우기).
+    expect(terminalKeyAction(key({ key: 'a', ctrlKey: true }))).toBeNull();
+    expect(terminalKeyAction(key({ key: 'k', ctrlKey: true }))).toBeNull();
+  });
+
   it('그 밖의 조합은 건드리지 않는다', () => {
     expect(terminalKeyAction(key({ key: 'c' }))).toBeNull();
     expect(terminalKeyAction(key({ key: 'x', ctrlKey: true }))).toBeNull();
@@ -85,7 +93,25 @@ describe('appOwnsKey', () => {
 
   it('기존 조합은 그대로 가져간다', () => {
     expect(appOwnsKey({ ctrlKey: true, shiftKey: true, key: 'p' } as KeyboardEvent)).toBe(true);
-    expect(appOwnsKey({ ctrlKey: true, shiftKey: false, key: 's' } as KeyboardEvent)).toBe(true);
+    expect(appOwnsKey({ ctrlKey: true, shiftKey: false, key: ',' } as KeyboardEvent)).toBe(true);
+  });
+
+  it('저장은 Ctrl+Shift+S 다 — Ctrl+S 는 셸이 보는 진짜 키(XOFF)라 넘겨야 한다', () => {
+    expect(appOwnsKey({ ctrlKey: true, shiftKey: true, key: 'S' } as KeyboardEvent)).toBe(true);
+    expect(appOwnsKey({ ctrlKey: true, shiftKey: false, key: 's' } as KeyboardEvent)).toBe(false);
+  });
+
+  it('모두 선택·버퍼 비우기는 터미널 안에서 풀리므로 앱의 것이 아니다', () => {
+    // `terminalKeyAction` 이 가져가고, 전역 처리기는 지금처럼 모르는 채로 둔다.
+    for (const k of ['a', 'k']) {
+      expect(appOwnsKey({ ctrlKey: true, shiftKey: true, key: k } as KeyboardEvent)).toBe(false);
+    }
+  });
+
+  it('새 세션(Ctrl+Shift+T)은 앱의 것 — 사이드바가 접혀 있어도 열려 있어야 하는 길이다', () => {
+    expect(appOwnsKey({ ctrlKey: true, shiftKey: true, key: 'T' } as KeyboardEvent)).toBe(true);
+    // Shift 없는 Ctrl+T 는 readline 의 transpose-chars 라 셸의 것이다.
+    expect(appOwnsKey({ ctrlKey: true, shiftKey: false, key: 't' } as KeyboardEvent)).toBe(false);
   });
 
   it('전체화면 토글은 터미널 안에서도 앱이 가져간다 — 되돌릴 길이 있어야 한다', () => {

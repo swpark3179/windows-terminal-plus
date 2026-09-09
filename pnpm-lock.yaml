@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/cascadia-mono':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/noto-sans-kr':
         specifier: ^5.1.1
         version: 5.3.0
@@ -35,6 +38,9 @@ importers:
       '@xterm/addon-unicode11':
         specifier: ^0.8.0
         version: 0.8.0(@xterm/xterm@5.5.0)
+      '@xterm/addon-web-links':
+        specifier: 0.11.0
+        version: 0.11.0(@xterm/xterm@5.5.0)
       '@xterm/addon-webgl':
         specifier: ^0.18.0
         version: 0.18.0(@xterm/xterm@5.5.0)
@@ -375,6 +381,9 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@fontsource/cascadia-mono@5.3.0':
+    resolution: {integrity: sha512-50GR+UT8w92Gzg5QWHQWe7arIfogm6VrpEqUx9K/YK/MgbwS2GaBx/Dfd+sE8uAQu6btnbDFq9ezrOC41fgo0g==}
 
   '@fontsource/noto-sans-kr@5.3.0':
     resolution: {integrity: sha512-/JnpTjaCOXW7xUoqOyCVYSr05VOkDy5Yla9O+WAEiS7u+yYLsmHoqj6v1W0bf91G8G3XA2+NnRS3CX2Tf/FVZg==}
@@ -857,6 +866,11 @@ packages:
 
   '@xterm/addon-unicode11@0.8.0':
     resolution: {integrity: sha512-LxinXu8SC4OmVa6FhgwsVCBZbr8WoSGzBl2+vqe8WcQ6hb1r6Gj9P99qTNdPiFPh4Ceiu2pC8xukZ6+2nnh49Q==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
+  '@xterm/addon-web-links@0.11.0':
+    resolution: {integrity: sha512-nIHQ38pQI+a5kXnRaTgwqSHnX7KE6+4SVoceompgHL26unAxdfP6IPqUTSYPQgSwM56hsElfoNrrW5V7BUED/Q==}
     peerDependencies:
       '@xterm/xterm': ^5.0.0
 
@@ -1929,6 +1943,8 @@ snapshots:
   '@esbuild/win32-x64@0.25.12':
     optional: true
 
+  '@fontsource/cascadia-mono@5.3.0': {}
+
   '@fontsource/noto-sans-kr@5.3.0': {}
 
   '@fontsource/noto-sans-mono@5.3.0': {}
@@ -2370,6 +2386,10 @@ snapshots:
       '@xterm/xterm': 5.5.0
 
   '@xterm/addon-unicode11@0.8.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
+
+  '@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0)':
     dependencies:
       '@xterm/xterm': 5.5.0
 

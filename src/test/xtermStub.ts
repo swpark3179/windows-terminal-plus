@@ -6,6 +6,8 @@
  * `vi.mock` 팩토리는 호이스팅되므로 파일 안에 클래스를 둘 수 없다.
  */
 
+type CsiHandler = (params: (number | number[])[]) => boolean | Promise<boolean>;
+
 /** xterm 의 `IEvent` 모양(구독하면 `IDisposable` 이 나온다)만 흉내 낸 작은 발신기. */
 function emitter<T>() {
   const fns = new Set<(v: T) => void>();
@@ -37,6 +39,8 @@ export class StubTerminal {
   private _scroll = emitter<number>();
   private _resize = emitter<{ cols: number; rows: number }>();
   private _bufferChange = emitter<unknown>();
+  private _title = emitter<string>();
+  private _bell = emitter<void>();
 
   buffer = {
     active: { type: 'normal' as 'normal' | 'alternate', baseY: 0, viewportY: 0 },
@@ -57,15 +61,47 @@ export class StubTerminal {
   scrolledLines: number[] = [];
   /** `scrollPages()` 가 받은 값들. */
   scrolledPages: number[] = [];
+  /** `selectAll()` 이 불린 횟수. */
+  selectedAll = 0;
+  /** `clear()` 가 불린 횟수. */
+  clearedBuffer = 0;
   keyHandler: ((e: KeyboardEvent) => boolean) | null = null;
 
-  constructor() {
+  /** 등록된 CSI 처리기 — 테스트가 시퀀스 도착을 흉내 낼 수 있게 붙잡아 둔다. */
+  csiHandlers: { prefix: string; final: string; cb: CsiHandler }[] = [];
+
+  parser = {
+    registerCsiHandler: (
+      id: { prefix?: string; intermediates?: string; final: string },
+      cb: CsiHandler,
+    ) => {
+      const entry = { prefix: id.prefix ?? '', final: id.final, cb };
+      this.csiHandlers.push(entry);
+      return {
+        dispose: () => {
+          const i = this.csiHandlers.indexOf(entry);
+          if (i >= 0) this.csiHandlers.splice(i, 1);
+        },
+      };
+    },
+  };
+
+  constructor(options: Record<string, unknown> = {}) {
+    // 생성자에 넘긴 값을 그대로 들고 있는다 — 배색·글꼴·링크 처리기를 넘겼는지 검사할 수 있게.
+    this.options = { ...options };
     StubTerminal.last = this;
   }
 
+  /** `write()` 로 들어온 것들 — 앱이 터미널에 직접 먹인 시퀀스를 검사할 때. */
+  written: string[] = [];
+
   loadAddon() {}
   open() {}
-  write() {}
+
+  write(data: string | Uint8Array) {
+    this.written.push(typeof data === 'string' ? data : new TextDecoder().decode(data));
+  }
+
   dispose() {}
 
   attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) {
@@ -79,6 +115,14 @@ export class StubTerminal {
   clearSelection() {
     this.cleared += 1;
     this.selection = '';
+  }
+
+  selectAll() {
+    this.selectedAll += 1;
+  }
+
+  clear() {
+    this.clearedBuffer += 1;
   }
 
   paste(data: string) {
@@ -121,6 +165,14 @@ export class StubTerminal {
     return this._resize.on(fn);
   }
 
+  onTitleChange(fn: (v: string) => void) {
+    return this._title.on(fn);
+  }
+
+  onBell(fn: () => void) {
+    return this._bell.on(fn);
+  }
+
   // ── 테스트가 터미널 쪽 변화를 흉내 낼 손잡이들 ──────────────
 
   /** 스크롤백이 자라거나 보는 자리가 바뀐 상황. 실제 xterm 처럼 `onRender` 로 알린다. */
@@ -143,6 +195,31 @@ export class StubTerminal {
     this.buffer.active.type = type;
     this._bufferChange.fire(this.buffer.active);
     this._render.fire({ start: 0, end: this.rows - 1 });
+  }
+
+  /**
+   * `CSI <prefix> <params> <final>` 이 PTY 에서 도착한 상황.
+   *
+   * 실제 xterm 처럼 **나중에 등록된 처리기부터** 부르고, true 를 돌려주는 것이 나오면 멈춘다.
+   * 아무도 가져가지 않으면 false — 그래야 "우리 것이 아니면 흘려보낸다" 를 검사할 수 있다.
+   */
+  emitCsi(prefix: string, final: string, params: (number | number[])[]): boolean {
+    for (let i = this.csiHandlers.length - 1; i >= 0; i -= 1) {
+      const h = this.csiHandlers[i];
+      if (h.prefix !== prefix || h.final !== final) continue;
+      if (h.cb(params) === true) return true;
+    }
+    return false;
+  }
+
+  /** 셸이 OSC 0/2 로 창 제목을 알린 상황. */
+  emitTitle(title: string) {
+    this._title.fire(title);
+  }
+
+  /** 프로그램이 BEL 을 찍은 상황. */
+  emitBell() {
+    this._bell.fire();
   }
 
   /** 배율·창 크기가 바뀌어 줄 수가 달라진 상황. */

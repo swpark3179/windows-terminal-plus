@@ -11,6 +11,8 @@ import type { MergeVerdict, Pane, Session, Snapshot } from '../state/types';
 export const TERM_PANE = 'p-term';
 export const EMPTY_PANE = 'p-empty';
 export const TEXT_PANE = 'p-text';
+export const NEW_SESSION = 'ses_new';
+export const NEW_TERM_PANE = 'p-new-term';
 
 function pane(id: string, over: Partial<Pane>): Pane {
   return {
@@ -61,6 +63,21 @@ export function mergedSnapshot(): Snapshot {
     pane(TERM_PANE, { kind: 'term', title: 'pwsh · 새 터미널', alive: true, c: 1, cs: 1 }),
   ];
   return snap;
+}
+
+/** 세션이 하나 더 생긴 스냅샷 — 새 세션은 터미널 하나가 세션을 가득 채운 채로 태어난다. */
+export function withNewSession(): Snapshot {
+  const snap = makeSnapshot();
+  const term = pane(NEW_TERM_PANE, { kind: 'term', title: 'pwsh · 새 터미널' });
+  const fresh: Session = {
+    ...snap.sessions[0],
+    id: NEW_SESSION,
+    name: '새 세션 2',
+    grid: { cols: 1, rows: 1, colWeights: [1], rowWeights: [1] },
+    panes: [term],
+    fullPaneId: NEW_TERM_PANE,
+  };
+  return { ...snap, sessions: [...snap.sessions, fresh], activeId: NEW_SESSION };
 }
 
 /** 두 번째 칸이 저장되지 않은 텍스트 편집기인 스냅샷. */
@@ -160,10 +177,15 @@ export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> 
       backend.snapshot = { ...backend.snapshot, sessions: [session] };
       return backend.snapshot;
     }
+    case 'session_create':
+      // Rust 가 새 세션을 "터미널 하나 · 세션 전체화면" 으로 세워 돌려준다.
+      backend.snapshot = withNewSession();
+      return backend.snapshot;
     case 'pty_open':
       return { restored: '', banner: '', attached: false };
     case 'pty_write':
     case 'pty_resize':
+    case 'pty_clear':
     case 'pty_detach':
     case 'set_sidebar_open':
     case 'snapshot_flush':

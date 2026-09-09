@@ -55,7 +55,9 @@ impl Snapshot {
             .filter(|s| !s.is_empty())
             .unwrap_or("rterm")
             .to_string();
-        let session = Session::new(name, cwd, 0);
+        let mut session = Session::new(name, cwd, 0);
+        // 처음 켠 사람에게도 빈 블럭이 아니라 쓸 수 있는 터미널이 보이게 한다.
+        crate::layout::start_full_terminal(&mut session);
         Snapshot {
             version: SNAPSHOT_VERSION,
             active_id: session.id.clone(),

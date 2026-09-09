@@ -62,6 +62,8 @@ export function PaneView({
   const zoomReset = useStore((s) => s.zoomReset);
   const setMdMode = useStore((s) => s.setMdMode);
   const toggleFull = useStore((s) => s.toggleFull);
+  // 셸이 OSC 0/2 로 알려 준 제목이 있으면 그것이 진실이다 — 지금 무엇이 도는지를 알려 준다.
+  const liveTitle = useStore((s) => s.liveTitles[pane.id]);
 
   const inMerge = !!mergeSet?.includes(pane.id);
   const marked = inMerge || (editMode && sel === pane.id);
@@ -81,6 +83,7 @@ export function PaneView({
   };
 
   const kind = pane.kind === 'empty' ? null : KIND_STYLE[pane.kind];
+  const title = (pane.kind === 'term' ? liveTitle : undefined) ?? pane.title;
 
   return (
     <div
@@ -119,8 +122,8 @@ export function PaneView({
           >
             {kind.label}
           </div>
-          <div className="pane__title" title={pane.path ?? pane.title}>
-            {pane.title}
+          <div className="pane__title" title={pane.path ?? title}>
+            {title}
           </div>
           {pane.dirty && (
             <div className="pane__dirty" title="저장되지 않은 변경 · Ctrl+S">

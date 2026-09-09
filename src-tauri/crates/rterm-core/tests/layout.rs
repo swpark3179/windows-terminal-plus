@@ -622,3 +622,70 @@ fn opening_a_file_in_a_hidden_block_returns_to_window_mode() {
 
     assert_eq!(s.full_pane_id, None, "방금 연 문서가 전체화면 뒤에 가려지면 안 된다");
 }
+
+#[test]
+fn a_new_session_starts_as_one_full_screen_terminal() {
+    // 요구사항: 새 세션은 "빈 블럭" 이 아니라 곧바로 쓸 수 있는 터미널로 시작한다.
+    let mut s = session();
+    layout::start_full_terminal(&mut s);
+
+    let pane = &s.panes[0];
+    assert_eq!(pane.kind, PaneKind::Term);
+    assert_eq!(pane.title, "pwsh · 새 터미널", "세션의 셸 이름이 제목에 들어간다");
+    assert_eq!(s.full_pane_id.as_deref(), Some(pane.id.as_str()));
+}
+
+#[test]
+fn starting_a_session_that_already_has_something_open_changes_nothing() {
+    // 복제된 세션처럼 이미 배치가 있는 경우에는 손대지 않는다.
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    let b = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+    occupy(&mut s, &a, PaneKind::Md);
+    let before = s.clone();
+
+    layout::start_full_terminal(&mut s);
+
+    assert_eq!(s, before, "이미 열린 것이 있으면 그대로 둔다");
+    assert_eq!(s.pane(&b).unwrap().kind, PaneKind::Empty);
+}
+
+#[test]
+fn open_terminal_only_accepts_an_empty_block() {
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    layout::open_terminal(&mut s, &a).expect("빈 블럭이므로 열린다");
+    assert_eq!(s.pane(&a).unwrap().kind, PaneKind::Term);
+
+    assert_eq!(
+        layout::open_terminal(&mut s, &a),
+        Err(LayoutError::NotEmpty),
+        "이미 무엇인가 열린 창은 덮어쓰지 않는다"
+    );
+    assert_eq!(
+        layout::open_terminal(&mut s, "p_없는창"),
+        Err(LayoutError::PaneNotFound)
+    );
+}
+
+#[test]
+fn opening_a_terminal_in_a_hidden_block_returns_to_window_mode() {
+    // `place_pane` 과 같은 이유 — 방금 연 터미널이 전체화면 뒤에 가려지면 안 된다.
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    let b = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+    occupy(&mut s, &a, PaneKind::Term);
+    set_full(&mut s, Some(&a)).unwrap();
+
+    layout::open_terminal(&mut s, &b).expect("빈 블럭에 열린다");
+
+    assert_eq!(s.full_pane_id, None);
+}
+
+#[test]
+fn a_new_session_keeps_the_shell_name_it_was_given() {
+    let mut s = session();
+    s.shell = rterm_core::Shell::Wsl;
+    layout::start_full_terminal(&mut s);
+    assert_eq!(s.panes[0].title, "wsl · 새 터미널");
+}

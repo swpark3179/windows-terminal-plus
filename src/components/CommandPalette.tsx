@@ -49,7 +49,7 @@ export function CommandPalette() {
       { icon: '⚙', label: '세션 설정', shortcut: 'Ctrl+,', run: () => store.openSettings() },
       { icon: '⊞', label: '레이아웃 편집 모드', shortcut: 'Ctrl+E', run: () => store.toggleEdit() },
       { icon: '◧', label: '사이드바 접기 / 펼치기', shortcut: 'Ctrl+B', run: () => store.toggleSidebar() },
-      { icon: '＋', label: '새 세션', run: () => void store.newSession() },
+      { icon: '＋', label: '새 세션', shortcut: 'Ctrl+Shift+T', run: () => void store.newSession() },
       { icon: '↺', label: '스냅샷 초기화 후 다시 시작', run: () => void store.resetSnapshot() },
     ];
 

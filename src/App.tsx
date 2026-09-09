@@ -16,7 +16,7 @@ import { TitleBar } from './components/TitleBar';
 import { Toast } from './components/Toast';
 import { flushSnapshot } from './ipc/bridge';
 import { appOwnsKey, terminalFocused } from './lib/keys';
-import { activeSession, dirtyPanes, useStore } from './state/store';
+import { activePanes, activeSession, dirtyPanes, useStore } from './state/store';
 
 /** 크래시로 스냅샷을 통째로 잃지 않도록 주기적으로 한 번 기록한다. */
 const FLUSH_INTERVAL_MS = 120_000;
@@ -50,6 +50,14 @@ export function App() {
         return;
       }
 
+      // 새 세션 — 윈도우 터미널의 "새 탭"(Ctrl+Shift+T)과 같은 자리.
+      // 사이드바가 접혀 있든 터미널이 포커스를 쥐고 있든 늘 열려 있어야 하는 길이다.
+      if (e.ctrlKey && e.shiftKey && k === 't') {
+        e.preventDefault();
+        void store.newSession();
+        return;
+      }
+
       if (k === 'escape') {
         store.closeOverlays();
         return;
@@ -71,7 +79,10 @@ export function App() {
         store.openSettings();
       } else if (k === 's') {
         e.preventDefault();
-        if (sel) void store.savePane(sel);
+        // 저장할 수 있는 창에만 보낸다. 고른 창은 터미널일 수 있고(새 세션은 늘 그렇다),
+        // 그때 그냥 보내면 백엔드가 "저장할 경로가 없습니다" 를 돌려줘 토스트만 뜬다.
+        const pane = activePanes(store.snapshot).find((p) => p.id === sel);
+        if (pane?.path) void store.savePane(pane.id);
       } else if (k === '=' || k === '+') {
         e.preventDefault();
         if (sel) void store.zoomBy(sel, 1);

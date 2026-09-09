@@ -16,7 +16,7 @@ use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::{Config, Term};
+use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor};
 
 pub mod osc;
@@ -129,6 +129,14 @@ impl TermCore {
     /// 셸이 OSC 로 설정한 창 제목을 한 번 꺼내 간다 (읽으면 비워진다).
     pub fn take_title(&self) -> Option<String> {
         self.titles.take()
+    }
+
+    /// 지금 대체 화면(`vim`·`claude`·`codex` 의 UI)인가.
+    ///
+    /// 대체 화면에는 히스토리가 없어서 스크롤백을 다루는 조작이 뜻을 잃는다 —
+    /// 부르는 쪽이 "지금은 하지 않는다" 를 판단할 수 있게 내보낸다.
+    pub fn on_alternate_screen(&self) -> bool {
+        self.term.mode().contains(TermMode::ALT_SCREEN)
     }
 
     pub fn size(&self) -> TermSize {
@@ -425,6 +433,20 @@ mod tests {
         t.feed(b"\x1b]0;my title\x07");
         assert_eq!(t.take_title().as_deref(), Some("my title"));
         assert_eq!(t.take_title(), None, "읽고 나면 비워진다");
+    }
+
+    #[test]
+    fn alternate_screen_is_reported() {
+        // 스크롤백을 다루는 조작(버퍼 지우기)은 대체 화면에서 뜻을 잃으므로 이 판정에 기댄다.
+        let mut core = TermCore::new(20, 3, 100);
+        assert!(!core.on_alternate_screen());
+
+        // `CSI ? 1049 h` — vim·claude·codex 가 UI 를 그리려 들어가는 화면.
+        core.feed(b"\x1b[?1049h");
+        assert!(core.on_alternate_screen());
+
+        core.feed(b"\x1b[?1049l");
+        assert!(!core.on_alternate_screen());
     }
 
     #[test]

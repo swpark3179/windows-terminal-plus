@@ -3,7 +3,7 @@
 //! 판정은 전부 `rterm-core` 가 한다. 프론트엔드는 드래그 중에도
 //! `layout_merge_check` 를 불러 같은 규칙을 그대로 본다 — 규칙이 두 벌 존재하지 않는다.
 
-use rterm_core::{layout, MergeVerdict, PaneKind, Snapshot, SplitDir, TrackAxis};
+use rterm_core::{layout, MergeVerdict, Snapshot, SplitDir, TrackAxis};
 use serde::Serialize;
 use tauri::State;
 
@@ -157,32 +157,7 @@ pub fn pane_open_terminal(
     pane_id: String,
 ) -> Result<Snapshot, String> {
     mutate(&state, &session_id, |s| {
-        let shell_label = match s.shell {
-            rterm_core::Shell::Pwsh => "pwsh",
-            rterm_core::Shell::Cmd => "cmd",
-            rterm_core::Shell::Wsl => "wsl",
-            rterm_core::Shell::Ssh => "ssh",
-        };
-        let title = format!("{shell_label} · 새 터미널");
-        let pane = s
-            .pane_mut(&pane_id)
-            .ok_or_else(|| "창을 찾을 수 없습니다".to_string())?;
-        if pane.kind != PaneKind::Empty {
-            return Err("빈 블럭에만 열 수 있습니다".into());
-        }
-        pane.kind = PaneKind::Term;
-        pane.title = title;
-        pane.content = None;
-        pane.path = None;
-        pane.mode = None;
-        pane.scrollback = None;
-        pane.alive = false;
-        // 새로 여는 창이 남의 폴더에서 뜨거나 AI 를 자동 실행하면 안 된다.
-        pane.cwd = None;
-        pane.ai = None;
-        // 터미널은 빈 블럭에만 열리므로 전체화면인 창일 수 없다 — 가려지지 않게 창 모드로.
-        s.full_pane_id = None;
-        Ok(())
+        layout::open_terminal(s, &pane_id).map_err(|e| e.to_string())
     })
 }
 

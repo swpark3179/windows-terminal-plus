@@ -25,7 +25,15 @@ vi.mock('@xterm/xterm', async () => {
 });
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('@xterm/addon-unicode11', () => ({ Unicode11Addon: class {} }));
-vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class {
+    onContextLoss() {
+      return { dispose() {} };
+    }
+    dispose() {}
+  },
+}));
+vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
 vi.mock('@xterm/addon-clipboard', () => ({ ClipboardAddon: class {}, Base64: class {} }));
 
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
@@ -37,6 +45,8 @@ import { MAX_PASTE_CHARS } from '../lib/clipboard';
 import { MIN_THUMB_PX } from '../lib/scrollbar';
 import { WHEEL_CAP_PER_FRAME } from '../lib/termWheel';
 import { terminalClipboard } from '../lib/terminalRegistry';
+import { useStore } from '../state/store';
+import { WIN32_NEWLINE, resetWin32InputModes } from '../lib/win32Input';
 import type { Pane } from '../state/types';
 
 const readMock = vi.mocked(readText);
@@ -78,6 +88,7 @@ function mount() {
 
 beforeEach(() => {
   resetTerminalStub();
+  resetWin32InputModes();
   readMock.mockReset();
   readMock.mockResolvedValue('');
   writeMock.mockReset();
@@ -222,6 +233,174 @@ describe('줄바꿈', () => {
 
     expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
     await waitFor(() => expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: '\n' }));
+  });
+});
+
+describe('win32-input-mode', () => {
+  /** ConPTY 가 부팅하며 보내는 `CSI ? 9001 h`. */
+  const askForWin32 = (term: ReturnType<typeof lastTerminal>) => term.emitCsi('?', 'h', [9001]);
+
+  it('ConPTY 가 청하면 줄바꿈을 진짜 키 이벤트로 보낸다 — codex 의 줄바꿈이 여기서 갈린다', async () => {
+    const { term, press } = mount();
+    expect(askForWin32(term)).toBe(true);
+
+    expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+    await waitFor(() =>
+      expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: WIN32_NEWLINE }),
+    );
+  });
+
+  it('보내는 것은 Ctrl+J 눌림·뗌 한 쌍이다 — 어느 클라이언트에서도 줄바꿈인 유일한 키', () => {
+    // Vk=VK_J(0x4a) · Sc=0x24 · Uc=LF · Cs=LEFT_CTRL_PRESSED. 뗌이 있어야 conhost 가
+    // 연속 눌림을 wRepeatCount 로 합쳐 버리지 않는다.
+    expect(WIN32_NEWLINE).toBe('\x1b[74;36;10;1;8_\x1b[74;36;10;0;8_');
+  });
+
+  it('끄라고 하면 예전의 LF 로 돌아간다', async () => {
+    const { term, press } = mount();
+    askForWin32(term);
+    expect(term.emitCsi('?', 'l', [9001])).toBe(true);
+
+    expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+    await waitFor(() => expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: '\n' }));
+  });
+
+  it('세션을 다녀와 xterm 이 새로 만들어져도 모드를 잊지 않는다 — ConPTY 는 한 번만 청한다', async () => {
+    const first = mount();
+    askForWin32(first.term);
+    first.view.unmount();
+
+    // 같은 창 id 로 다시 마운트 — 셸(PTY)은 그대로 살아 있는 상황.
+    const { press } = mount();
+    expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+    await waitFor(() =>
+      expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: WIN32_NEWLINE }),
+    );
+  });
+
+  it('9001 이 아닌 사설 모드는 xterm 에 그대로 흘려보낸다', () => {
+    const { term } = mount();
+    // 대체 화면(1049) · 괄호 붙여넣기(2004) · 마우스 보고(1006) 가 모두 이 길로 지나간다.
+    for (const mode of [1049, 2004, 1006, 25]) {
+      expect(term.emitCsi('?', 'h', [mode])).toBe(false);
+      expect(term.emitCsi('?', 'l', [mode])).toBe(false);
+    }
+    // 여러 개를 한 번에 켜는 형태도 우리 것이 아니다.
+    expect(term.emitCsi('?', 'h', [1000, 1006])).toBe(false);
+  });
+
+  it('창을 떠나면 처리기를 거둔다', () => {
+    const { view, term } = mount();
+    expect(term.csiHandlers.length).toBe(2);
+    view.unmount();
+    expect(term.csiHandlers.length).toBe(0);
+  });
+});
+
+describe('스크롤백 조작', () => {
+  it('Ctrl+Shift+A 는 모두 선택, Ctrl+Shift+K 는 버퍼 비우기다', async () => {
+    const { term, press } = mount();
+
+    expect(press({ key: 'A', ctrlKey: true, shiftKey: true })).toBe(false);
+    expect(term.selectedAll).toBe(1);
+
+    expect(press({ key: 'K', ctrlKey: true, shiftKey: true })).toBe(false);
+    // 화면과 Rust 코어에 **같은 시퀀스**를 먹인다 — 그래야 두 버퍼가 갈라지지 않는다.
+    expect(term.written).toContain('\x1b[H\x1b[2J\x1b[3J');
+    await waitFor(() => expect(backend.lastArgs('pty_clear')).toEqual({ paneId: 'p-term' }));
+  });
+
+  it('대체 화면에서는 버퍼를 비우지 않는다 — claude·codex 가 그려 둔 화면을 지워 버린다', () => {
+    const { term, press } = mount();
+    term.buffer.active.type = 'alternate';
+    const written = term.written.length;
+    // `backend.calls` 는 파일 안에서 누적되므로 이 테스트가 늘린 만큼만 본다.
+    const cleared = () => backend.calls.filter((c) => c === 'pty_clear').length;
+    const before = cleared();
+
+    expect(press({ key: 'K', ctrlKey: true, shiftKey: true })).toBe(false);
+
+    expect(term.written.length).toBe(written);
+    expect(cleared()).toBe(before);
+  });
+
+  it('Shift 없는 Ctrl+A · Ctrl+K 는 셸의 것이다 — 줄 처음 이동과 줄 끝 지우기', () => {
+    const { term, press } = mount();
+    expect(press({ key: 'a', ctrlKey: true })).toBe(true);
+    expect(press({ key: 'k', ctrlKey: true })).toBe(true);
+    expect(term.selectedAll).toBe(0);
+    expect(term.clearedBuffer).toBe(0);
+  });
+
+  it('Ctrl+S 는 셸로 간다 — 앱이 가져가면 XOFF·정방향 검색이 죽는다', () => {
+    const { press } = mount();
+    expect(press({ key: 's', ctrlKey: true })).toBe(true);
+  });
+});
+
+describe('창 제목', () => {
+  it('셸이 OSC 0/2 로 알려 준 제목을 스토어에 싣는다', () => {
+    const { term } = mount();
+    term.emitTitle('claude — rterm');
+    expect(useStore.getState().liveTitles[PANE.id]).toBe('claude — rterm');
+  });
+
+  it('제어문자·방향 전환 문자를 다듬어 넣는다 — 값을 정하는 것은 화면 속 프로그램이다', () => {
+    const { term } = mount();
+    term.emitTitle('두\n줄\u202e짜리');
+    expect(useStore.getState().liveTitles[PANE.id]).toBe('두 줄짜리');
+  });
+
+  it('알맹이가 없는 제목은 무시한다 — 원래 제목이 남아야 한다', () => {
+    const { term } = mount();
+    term.emitTitle('pwsh');
+    term.emitTitle('\u0000 \u202e');
+    expect(useStore.getState().liveTitles[PANE.id]).toBe('pwsh');
+  });
+});
+
+describe('벨', () => {
+  it('BEL 이 오면 창 테두리를 잠깐 밝힌다 — xterm 5.5 에는 벨 표시가 없다', () => {
+    vi.useFakeTimers();
+    try {
+      const { view, term } = mount();
+      const body = view.container.querySelector('.term-body') as HTMLElement;
+      expect(body.classList.contains('term-body--bell')).toBe(false);
+
+      term.emitBell();
+      expect(body.classList.contains('term-body--bell')).toBe(true);
+
+      vi.advanceTimersByTime(1000);
+      expect(body.classList.contains('term-body--bell')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('벨이 연달아 와도 깜빡이지 않는다 — 켜진 상태를 늘린다', () => {
+    vi.useFakeTimers();
+    try {
+      const { view, term } = mount();
+      const body = view.container.querySelector('.term-body') as HTMLElement;
+      term.emitBell();
+      vi.advanceTimersByTime(100);
+      term.emitBell();
+      vi.advanceTimersByTime(100);
+      expect(body.classList.contains('term-body--bell')).toBe(true);
+      vi.advanceTimersByTime(1000);
+      expect(body.classList.contains('term-body--bell')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('하이퍼링크', () => {
+  it('xterm 에 우리 처리기를 넘긴다 — 기본 동작은 문서째로 주소를 열어 버린다', () => {
+    const { term } = mount();
+    const handler = term.options.linkHandler as { activate?: unknown; hover?: unknown } | undefined;
+    expect(typeof handler?.activate).toBe('function');
+    expect(typeof handler?.hover).toBe('function');
   });
 });
 

@@ -67,6 +67,14 @@ interface AppState {
   confirm: ConfirmRequest | null;
   /** 경계를 끄는 동안의 임시 트랙 몫. 손을 떼면 Rust 로 넘어간다. */
   resizeDraft: { axis: TrackAxis; weights: number[] } | null;
+  /**
+   * 셸이 OSC 0/2 로 알려 준 창별 제목. 창 머리글이 이것을 먼저 쓴다.
+   *
+   * 스냅샷에 남기지 않는다 — 다음 실행에서는 셸이 다시 알려 주고, 그때까지는 셸 이름
+   * (`pwsh · 새 터미널`)이 맞는 표시다. 반대로 세션을 오가는 동안에는 **지우지 않는다**:
+   * 셸은 계속 살아 있지만 다시 붙을 때 재생되는 스크롤백에는 OSC 가 들어 있지 않다.
+   */
+  liveTitles: Record<string, string>;
 
   // ── 액션 ────────────────────────────────────
   boot: () => Promise<void>;
@@ -129,6 +137,8 @@ interface AppState {
   setFileDrop: (on: boolean) => void;
   setConfirm: (request: ConfirmRequest | null) => void;
   setResizeDraft: (draft: { axis: TrackAxis; weights: number[] } | null) => void;
+  setLiveTitle: (paneId: string, title: string) => void;
+  clearLiveTitle: (paneId: string) => void;
   resetTrackWeights: () => Promise<void>;
   closeOverlays: () => void;
 }
@@ -169,6 +179,7 @@ export const useStore = create<AppState>((set, get) => ({
   fileDrop: false,
   confirm: null,
   resizeDraft: null,
+  liveTitles: {},
 
   boot: async () => {
     const boot = await api.bootApp();
@@ -194,7 +205,17 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  apply: (snapshot) => set({ snapshot }),
+  apply: (snapshot) =>
+    set((s) => {
+      // 스냅샷에서 사라진 창의 제목은 함께 잊는다 — 세션 삭제·병합·스냅샷 초기화가 모두
+      // 여기를 지나므로, 각자 지우게 하는 것보다 한 곳에서 훑는 것이 새지 않는다.
+      const ids = new Set(snapshot.sessions.flatMap((x) => x.panes.map((p) => p.id)));
+      const stale = Object.keys(s.liveTitles).filter((id) => !ids.has(id));
+      if (stale.length === 0) return { snapshot };
+      const liveTitles = { ...s.liveTitles };
+      for (const id of stale) delete liveTitles[id];
+      return { snapshot, liveTitles };
+    }),
 
   flash: (message) => {
     clearTimeout(toastTimer);
@@ -380,6 +401,7 @@ export const useStore = create<AppState>((set, get) => ({
     const { snapshot, flash, apply } = get();
     if (!snapshot) return;
     await guard(async () => {
+      // 닫힌 창은 새 id 의 빈 블럭이 되므로 `apply` 의 훑기가 옛 제목을 함께 거둔다.
       apply(await api.closePane(snapshot.activeId, paneId));
       flash('창을 닫아 빈 블럭으로');
     }, flash);
@@ -499,9 +521,22 @@ export const useStore = create<AppState>((set, get) => ({
   newSession: async () => {
     const { flash, apply } = get();
     await guard(async () => {
-      apply(await api.createSession());
-      set({ sel: null, settings: true });
-      flash('새 세션 생성 · 빈 블럭에서 시작');
+      const snapshot = await api.createSession();
+      apply(snapshot);
+      // Rust 가 새 세션을 "터미널 하나가 세션을 가득 채운" 모습으로 세워 준다
+      // (`layout::start_full_terminal`). 그 창을 고른 상태로 둬야 Ctrl+Shift+F · Ctrl+휠 처럼
+      // "고른 창" 을 대상으로 하는 조작이 곧바로 듣는다.
+      const session = activeSession(snapshot);
+      set({
+        sel: session?.fullPaneId ?? session?.panes[0]?.id ?? null,
+        editMode: false,
+        op: null,
+        mergeSet: null,
+        mergeVerdict: null,
+      });
+      // 설정 모달을 띄우지 않는다 — 방금 띄운 터미널을 곧바로 덮어 버리기 때문이다.
+      // 대신 어디서 열 수 있는지 알려 준다 (Ctrl+, 는 터미널 안에서도 앱이 가져간다).
+      flash('새 세션 · 터미널 전체화면으로 시작 · 세션 설정은 Ctrl+,');
     }, flash);
   },
 
@@ -561,6 +596,17 @@ export const useStore = create<AppState>((set, get) => ({
   setFileDrop: (fileDrop) => set({ fileDrop }),
   setConfirm: (confirm) => set({ confirm }),
   setResizeDraft: (resizeDraft) => set({ resizeDraft }),
+
+  setLiveTitle: (paneId, title) =>
+    set((s) => (s.liveTitles[paneId] === title ? s : { liveTitles: { ...s.liveTitles, [paneId]: title } })),
+
+  clearLiveTitle: (paneId) =>
+    set((s) => {
+      if (!(paneId in s.liveTitles)) return s;
+      const liveTitles = { ...s.liveTitles };
+      delete liveTitles[paneId];
+      return { liveTitles };
+    }),
 
   resetTrackWeights: async () => {
     const { snapshot, flash, apply } = get();

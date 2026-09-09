@@ -39,13 +39,25 @@ vi.mock('@xterm/xterm', async () => {
 });
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('@xterm/addon-unicode11', () => ({ Unicode11Addon: class {} }));
-vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class {
+    onContextLoss() {
+      return { dispose() {} };
+    }
+    dispose() {}
+  },
+}));
+vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
 vi.mock('@xterm/addon-clipboard', () => ({ ClipboardAddon: class {}, Base64: class {} }));
 
 import { App } from './App';
+import { terminalFocused } from './lib/keys';
 import { useStore } from './state/store';
+import { lastTerminal } from './test/xtermStub';
 import {
   EMPTY_PANE,
+  NEW_SESSION,
+  NEW_TERM_PANE,
   TERM_PANE,
   TEXT_PANE,
   backend,
@@ -75,6 +87,7 @@ function resetStore() {
     fileDrop: false,
     confirm: null,
     resizeDraft: null,
+    liveTitles: {},
     query: '',
   });
 }
@@ -132,6 +145,80 @@ describe('앱 껍데기', () => {
     expect(screen.getByText('▮ 터미널 열기')).toBeInTheDocument();
     expect(screen.getByText('◫ 파일 열기')).toBeInTheDocument();
     expect(screen.getByText('파일을 이 블럭으로 드래그해도 열립니다')).toBeInTheDocument();
+  });
+});
+
+describe('창 제목', () => {
+  it('셸이 알려 준 제목이 창 머리글에 나타난다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    const head = () => paneEl(TERM_PANE).querySelector('.pane__title')!;
+    expect(head().textContent).toBe('pwsh · 새 터미널');
+
+    act(() => lastTerminal().emitTitle('claude — rterm'));
+
+    await waitFor(() => expect(head().textContent).toBe('claude — rterm'));
+    // 툴팁도 같은 값을 보여 준다 (잘려도 마우스를 올려 전체를 볼 수 있게).
+    expect(head().getAttribute('title')).toBe('claude — rterm');
+  });
+});
+
+describe('새 세션', () => {
+  /** 새 세션이 만들어졌고 그 터미널이 세션을 가득 채우고 있는가. */
+  const expectFullTerminalSession = async () => {
+    await waitFor(() => expect(useStore.getState().snapshot?.activeId).toBe(NEW_SESSION));
+    expect(backend.calls).toContain('session_create');
+    await waitFor(() => expect(paneEl(NEW_TERM_PANE)).toBeTruthy());
+    expect(document.querySelector('.stage--full')).toBeTruthy();
+    expect(paneEl(NEW_TERM_PANE).className).toContain('pane--full');
+    // 빈 블럭 안내가 아니라 진짜 터미널이 서 있어야 한다.
+    expect(screen.queryByText('▮ 터미널 열기')).toBeNull();
+    expect(paneEl(NEW_TERM_PANE).querySelector('.term-body')).toBeTruthy();
+  };
+
+  it('사이드바의 ＋ 는 터미널 전체화면 상태로 세션을 연다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(screen.getByLabelText('새 세션'));
+
+    await expectFullTerminalSession();
+    // 방금 띄운 터미널을 설정 모달이 곧바로 덮어 버리면 안 된다.
+    expect(useStore.getState().settings).toBe(false);
+    // 고른 창은 그 터미널이어야 Ctrl+Shift+F · Ctrl+휠 이 곧바로 듣는다.
+    expect(useStore.getState().sel).toBe(NEW_TERM_PANE);
+  });
+
+  it('사이드바가 접혀 있어도 ＋ 로 세션을 더 만들 수 있다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    // Ctrl+B 로 접으면 40px 레일만 남는다.
+    fireEvent.keyDown(window, { key: 'b', ctrlKey: true });
+    await waitFor(() => expect(document.querySelector('.rail')).toBeTruthy());
+    expect(document.querySelector('.sidebar')).toBeNull();
+
+    const plus = within(document.querySelector('.rail') as HTMLElement).getByLabelText('새 세션');
+    fireEvent.click(plus);
+
+    await expectFullTerminalSession();
+  });
+
+  it('Ctrl+Shift+T 는 터미널 안에서도 새 세션을 연다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    // 터미널에 포커스가 있어도 앱이 가져가는 조합이다.
+    // (진짜 xterm 은 `.term-body` 안에 숨은 textarea 를 두고 거기서 키를 받는다.)
+    const hidden = document.createElement('textarea');
+    paneEl(TERM_PANE).querySelector('.term-body')!.appendChild(hidden);
+    hidden.focus();
+    expect(terminalFocused()).toBe(true);
+
+    fireEvent.keyDown(window, { key: 'T', ctrlKey: true, shiftKey: true });
+
+    await expectFullTerminalSession();
   });
 });
 

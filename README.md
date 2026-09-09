@@ -26,9 +26,13 @@ src/                          React + TypeScript — 렌더와 입력만 담당
   lib/scrollbar.ts            터미널 스크롤 막대 기하 (최소 손잡이 크기 · 가상 뷰포트) ← 순수, 테스트 대상
   lib/termWheel.ts            대체 화면에서 막대가 프로그램에 보내는 휠 (칸 ↔ 이벤트 변환)
   lib/terminalRegistry.ts     창 id → 그 창의 복사·붙여넣기 손잡이
+  lib/win32Input.ts           win32-input-mode — Shift+Enter 를 진짜 키 이벤트로   ← 순수, 테스트 대상
+  lib/termTheme.ts            터미널 배색 + 대비 계산 (규칙을 테스트가 지킨다)      ← 순수, 테스트 대상
+  lib/termText.ts             터미널이 준 제목·주소를 UI 에 옮길 때의 다듬기        ← 순수, 테스트 대상
+  lib/termLinks.ts            하이퍼링크 — Ctrl+클릭 · 실제 주소 칩
 
 src-tauri/
-  src/commands/               세션 · 레이아웃 · PTY · 파일 명령
+  src/commands/               세션 · 레이아웃 · PTY · 파일 · 링크 열기 명령
   src/state.rs                스냅샷 한 벌 + 살아있는 PTY 목록 + 셸이 알려 준 것
   src/shellinit.rs            셸별 통합 주입 (pwsh 스크립트 · cmd PROMPT · WSLENV)
   src/aiscan.rs               셸 자손을 훑어 돌고 있는 claude/codex 찾기
@@ -38,8 +42,11 @@ src-tauri/
   crates/rterm-term/src/osc.rs  셸 통합 마커(OSC 7 · 9;9) 스캐너
 ```
 
-글꼴은 구글 산세리프 두 벌을 겹쳐 쓴다 — 라틴/숫자는 **Roboto**, 한글은 **Noto Sans KR**,
-고정폭은 **Noto Sans Mono**. 모두 로컬 번들이라 오프라인에서도 같은 모양이 나온다.
+앱 UI 글꼴은 구글 산세리프 두 벌을 겹쳐 쓴다 — 라틴/숫자는 **Roboto**, 한글은 **Noto Sans KR**.
+터미널 본문은 윈도우 터미널의 기본 얼굴인 **Cascadia Mono**(400·700·이탤릭, 라틴 부분집합만
+112 KB)를 첫 글꼴로 쓰고, 없으면 **Noto Sans Mono**, 한글은 **Noto Sans KR** 이 맡는다 —
+Cascadia 와 Noto Sans Mono 에는 한글 글리프가 하나도 없다. 모두 로컬 번들이라 오프라인에서도,
+Cascadia 가 깔려 있지 않은 윈도우에서도 같은 모양이 나온다.
 
 한글 입력이 들어가는 칸은 전부 `TextField` 를 쓴다. 값을 Rust 로 보내고 돌아온 스냅샷을
 그대로 되먹이면 IME 조합 중에 입력창이 덮어써져 커서가 튄다. 그래서 화면 값은 로컬 상태가
@@ -48,6 +55,18 @@ src-tauri/
 **레이아웃과 터미널 버퍼의 단일 진실 공급원은 Rust다.** 프론트엔드는 분할·병합·교환을 스스로
 계산하지 않고 명령을 부른 뒤 돌아온 스냅샷을 렌더한다. 병합 드래그 중의 미리보기조차
 `layout_merge_check` 를 호출해 같은 판정을 받아 쓰므로 규칙이 두 벌 존재하지 않는다.
+
+## 세션
+
+세션은 창 배치 한 벌과 그 안에서 도는 셸들의 묶음이다. 왼쪽 목록에서 고르고, `＋` 로 만든다.
+
+**새 세션은 터미널 하나가 세션을 가득 채운 채로 열린다.** 예전에는 빈 블럭 하나로 태어나
+"터미널 열기" 를 누르는 것 말고는 할 일이 없었다. 그 한 걸음은 Rust 가 대신 밟는다
+(`layout::start_full_terminal` — 세션 만들기 한 번에 배치까지 끝난다). 처음 켤 때 만들어지는
+세션도 같다. 곧바로 띄운 터미널을 덮어 버리지 않도록 설정 모달은 열지 않는다 — `Ctrl+,` 로 연다.
+
+**사이드바가 접혀 있어도 세션을 만들 수 있다.** 40px 레일 맨 위의 `＋`, 또는 어디서나
+`Ctrl+Shift+T`(윈도우 터미널의 "새 탭" 과 같은 자리). 명령 팔레트에도 있다.
 
 ## 레이아웃 조작
 
@@ -134,6 +153,44 @@ src-tauri/
 세션을 옮겨 다녀도 셸은 죽지 않는다. xterm 이 사라지면 `pty_detach` 로 출력 채널만 떼고,
 돌아오면 `pty_open` 이 살아 있는 슬롯에 다시 붙어 Rust 버퍼를 replay 한다.
 
+### 배색
+
+윈도우 터미널의 기본 배색인 **Campbell** 을 이 앱의 따뜻한 톤으로 옮겼다. 그대로 가져올 수는
+없다 — Campbell 은 자기 배경(`#0C0C0C`)에서도 빨강 3.2:1 · 파랑 2.4:1 로 어둡고, 이 앱의
+배경(`#1b1a18`)에서는 더 나빠진다.
+
+그래서 **색상(hue)은 Campbell 을, 밝기는 대비로** 정했다. OKLCH 에서 색상마다 sRGB 안에서
+낼 수 있는 가장 선명한 색을 고르고, 보통색은 배경 대비 5.2:1, 밝은색은 8:1 에 맞췄다.
+값은 `lib/termTheme.ts` 에 있고, **규칙은 테스트가 지킨다**(`termTheme.test.ts`) — 색을 손봐도
+읽을 수 없게 되지는 않는다.
+
+예전 배색에서 고친 것이 하나 더 있다. 보통색과 밝은색의 밝기 차가 1.15~1.35배뿐이었고
+`white` 와 `foreground` 가 같은 값이었다. xterm 은 굵은 글자를 밝은색으로 그리므로
+(`drawBoldTextInBrightColors` 기본값 `true`) **굵게가 화면에서 보이지 않았다.** 지금은 모든
+짝이 1.5배 이상 벌어져 있다. 굵은 얼굴(Cascadia Mono 700)도 함께 담아 가짜 굵기를 없앴다.
+
+낱말 단위 선택(더블클릭)의 경계도 윈도우 터미널의 `wordDelimiters` 기본값으로 맞췄다 —
+xterm 기본값은 `--flag=value` 나 `C:\a\b` 를 한 낱말로 잡는다.
+
+`BEL` 은 소리 대신 그 창의 테두리를 한 번 밝힌다(xterm 5.5 에는 벨 표시가 아예 없다).
+창이 여럿인 앱에서 소리는 어느 창인지 알려 주지 못한다.
+
+`Ctrl+Shift+K`(스크롤백 비우기)는 화면과 **Rust 버퍼에 같은 시퀀스를 먹인다** —
+`CUP`·`ED 2`·`ED 3`(`pty_clear`). 두 가지를 지키기 위해서다.
+
+- 화면만 비우면 스냅샷이 여전히 옛 줄을 들고 있어서, 세션을 다녀오거나 앱을 다시 켤 때 방금 버린
+  것이 되살아난다 — 재연결이 `serialize_scrollback` 을 다시 써 주기 때문이다.
+- 한쪽에만 다른 조작을 하면(xterm 의 `clear()` 는 프롬프트 줄 하나를 남기고 코어는 남기지 않는다)
+  두 버퍼가 어긋난 채 갈라진다. 같은 바이트를 주면 같은 상태가 된다.
+
+**대체 화면에서는 거부한다.** `claude`·`codex`·`vim` 이 도는 자리인데, 거기에는 버릴 히스토리가
+아예 없고(`ED 3` 는 아무 일도 하지 않는다) `ED 2` 는 그 프로그램이 그려 둔 화면만 지워 버린다 —
+프로그램은 지워진 것을 모르므로 다시 그리지도 않는다. 실제로 그런지는 테스트로 확인해 두었다
+(`commands/pty.rs` 의 `the_clear_sequence_is_useless_on_the_alternate_screen`).
+
+GPU 컨텍스트를 잃으면(절전 복귀·드라이버 갱신) WebGL 애드온을 떼고 DOM 렌더러로 돌아간다.
+그러지 않으면 셸은 계속 도는데 화면만 옛 글자로 얼어붙는다.
+
 ### 스크롤
 
 터미널의 스크롤 막대는 **앱이 직접 그린다**(`components/TerminalScrollbar.tsx`, 기하는
@@ -211,6 +268,11 @@ xterm 의 진짜 스크롤바는 지우지 않고 **투명하게 자리만** 남
 | `wsl` | `PROMPT_COMMAND` 를 `WSLENV` 에 얹어 넘기고, 복원할 때는 `wsl.exe --cd` |
 | `ssh` | 없음 — 원격 셸은 우리 것이 아니다 |
 
+창 제목줄은 셸이 `OSC 0/2` 로 알려 주는 제목을 그대로 싣는다 — 지금 그 창에서 무엇이 도는지가
+보인다. 알려 주기 전까지는 셸 이름(`pwsh · 새 터미널`)이 남는다. 값을 정하는 것은 화면 속
+프로그램이므로 제어문자와 방향 전환 문자를 걷어내고 길이를 자른 뒤에 싣는다
+(`lib/termText.ts`) — 그러지 않으면 제목 하나로 제목줄 배치가 깨지거나 보이는 순서가 뒤집힌다.
+
 `RTERM_NO_SHELL_INTEGRATION` 을 세우면 통째로 꺼진다. oh-my-posh 처럼 `prompt` 를 나중에 다시
 정의하는 도구를 쓰면 마커가 사라지는데, 그때는 폴더 복원만 조용히 꺼질 뿐 아무것도 깨지지 않는다.
 
@@ -272,7 +334,8 @@ WSL 의 폴더 복원은 `wsl.exe --cd` 로 동작하고, SSH 는 폴더도 복�
 - **되돌리기** — `Ctrl+Z` / `Ctrl+Y`. 편집 기록은 앱이 직접 들고 간다. contenteditable 의 기본
   undo 는 우리가 DOM 을 직접 건드리는 조작(라인 잘라내기·표 넣기)과 어긋나기 때문이다.
   연속으로 친 글자는 한 덩어리로 묶여 한 번에 되돌아간다.
-- **저장** — `Ctrl+S`. `.md` 는 원문 그대로, 리치 텍스트는 평문으로 되돌려 쓴다.
+- **저장** — `Ctrl+S`(터미널에 포커스가 있을 때는 `Ctrl+Shift+S`). `.md` 는 원문 그대로,
+  리치 텍스트는 평문으로 되돌려 쓴다.
 
 ### 저장하지 않은 변경
 
@@ -292,16 +355,25 @@ WSL 의 폴더 복원은 `wsl.exe --cd` 로 동작하고, SSH 는 폴더도 복�
 | `Ctrl+B` / `Ctrl+Shift+B` | 사이드바 접기·펼치기 |
 | `Ctrl+E` / `Ctrl+Shift+E` | 레이아웃 편집 모드 |
 | `Ctrl+Shift+F` | 고른 창 전체화면 · 창 모드 전환 |
+| `Ctrl+Shift+T` | 새 세션 (사이드바가 접혀 있어도, 터미널 안에서도) |
 | `Shift+Enter` / `Ctrl+Enter` | 터미널 줄바꿈 — `claude`·`codex` 안에서 (아래 참조) |
+| `Ctrl+Shift+A` / `Ctrl+Shift+K` | 터미널 모두 선택 · 스크롤백 비우기 (윈도우 터미널과 같은 키) |
+| `Ctrl+클릭` | 터미널에 찍힌 주소를 브라우저에서 열기 (아래 참조) |
 | `Ctrl+,` | 세션 설정 |
-| `Ctrl+S` | 편집 중인 파일 저장 |
+| `Ctrl+Shift+S` | 편집 중인 파일 저장 (터미널 밖에서는 `Ctrl+S` 도) |
 | `Ctrl+Z` / `Ctrl+Y` | 편집 되돌리기 / 다시 실행 (텍스트 편집기) |
 | `Ctrl+X` | 캐럿이 있는 줄 잘라내기 (선택 없을 때) |
 | `Ctrl+±` · `Ctrl+0` · `Ctrl+휠` | 창별 확대 |
 | `Esc` | 열린 오버레이 닫기 |
 
-터미널에 포커스가 있을 때는 위 표의 `Ctrl+Shift+*` · `Ctrl+,` · `Ctrl+S` · 확대 조합과
-클립보드 조합만 앱이 가져가고 나머지는 전부 셸로 간다(`Ctrl+B`/`Ctrl+E` 같은 readline 편집이 살아 있다).
+터미널에 포커스가 있을 때는 위 표의 `Ctrl+Shift+*` · `Ctrl+,` · 확대 조합과 클립보드 조합만
+앱이 가져가고 나머지는 전부 셸로 간다(`Ctrl+B`/`Ctrl+E` 같은 readline 편집이 살아 있다).
+
+`Ctrl+Shift+<글자>` 를 고른 이유가 있다. xterm 은 그 조합에서 **어떤 바이트도 내보내지 않으므로**
+(`common/input/Keyboard.ts` 의 ctrl 분기는 `!shiftKey` 를 요구한다) 셸에서 빼앗을 것이 없다.
+같은 이유로 저장은 `Ctrl+S` 에서 `Ctrl+Shift+S` 로 옮겼다 — `Ctrl+S` 는 셸이 관찰하는 진짜 키
+(`0x13` · XOFF · readline 의 정방향 검색)라서 앱이 가져가면 터미널에서 그 키가 죽는다.
+터미널 밖(에디터 패널)에서는 이 관문을 지나지 않으므로 `Ctrl+S` 가 그대로 듣는다.
 
 ### 클립보드
 
@@ -331,24 +403,107 @@ WSL 의 폴더 복원은 `wsl.exe --cd` 로 동작하고, SSH 는 폴더도 복�
 
 ### 줄바꿈
 
-일반 터미널은 `Shift`·`Ctrl` 을 누르고 있어도 `Enter` 를 그냥 CR 한 글자로 뭉개 버려서, 셸이
-평범한 `Enter`(제출)와 구분할 수 없다. `Shift+Enter`/`Ctrl+Enter` 는 `Ctrl+J` 와 똑같은 LF
-한 글자(`\n`)를 보낸다 — 이 터미널이 뭔지 모를 때 `claude`·`codex` 둘 다 공통으로 알아듣는
-줄바꿈 경로가 바로 이거다(`claude` 의 도움말도 셸을 못 알아볼 땐 `ctrl+j` 를 안내하고,
-`codex` 는 애초에 `Ctrl+J` 를 줄바꿈으로 하드코딩해 뒀다). Claude Code 공식 `/terminal-setup`
-이 쓰는 `ESC+CR`(메타+엔터) 관례는 일부러 쓰지 않았다 — `codex` 는 그 조합을 못 알아듣고
-그냥 제출해 버린다(업스트림에도 같은 증상의 Alt+Enter 리그레션 이슈가 있다).
+VT 에는 `Shift+Enter` 를 나타낼 바이트가 **없다.** `Shift` 를 누르고 있어도 `Enter` 는 CR 한
+글자라서, 셸도 그 안의 프로그램도 평범한 `Enter`(제출)와 구분할 수 없다. 윈도우에서 이 문제를
+푸는 길이 마이크로소프트가 만든 **win32-input-mode** 다(`microsoft/terminal#4999`, `#530`).
 
-LF 는 이미 지금도 아무 데서나(`vim`·`less`·`tmux` 의 대체 화면 포함) 별 처리 없이 통과하던
-`Ctrl+J` 와 같은 바이트라서, 대체 화면을 따로 가리지 않는다. 이것도 붙여넣기처럼 스크롤을
-바닥으로 돌려놓는다 — 스크롤을 올려 둔 채 줄을 넣으면 xterm 이 원래 하는 자동 스크롤을
-우리가 가로채는 키 처리기가 건너뛰기 때문에, 우리가 대신 해 준다.
+ConPTY 는 부팅하자마자 `ESC[c ESC[?1004h ESC[?9001h` 를 우리에게 보낸다(`src/host/VtIo.cpp` 의
+`StartIfNeeded`). 마지막 것이 "키를 `INPUT_RECORD` 모양 그대로 달라" 는 청이다. 알아들으면
+(`lib/win32Input.ts`) 그때부터 줄바꿈을 이렇게 보낸다 — **`Ctrl+J` 의 눌림과 뗌**이다.
+
+```
+ESC [ 74 ; 36 ; 10 ; 1 ; 8 _      ESC [ 74 ; 36 ; 10 ; 0 ; 8 _
+      │    │    │   │   └ dwControlKeyState = LEFT_CTRL_PRESSED   (뗌: bKeyDown = 0)
+      │    │    │   └ bKeyDown = 1
+      │    │    └ UnicodeChar = 10 (LF)
+      │    └ wVirtualScanCode = 0x24  (J 자리)
+      └ wVirtualKeyCode = VK_J
+```
+
+### 왜 `Shift+Enter` 가 아니라 `Ctrl+J` 인가
+
+이 자리에서 고를 수 있는 키가 여럿인데, **클라이언트가 콘솔 레코드를 읽는지 VT 바이트를 읽는지에
+따라 결과가 갈린다.** 클라이언트가 `ENABLE_VIRTUAL_TERMINAL_INPUT` 을 켜 두면(`wsl.exe`·`ssh.exe`,
+Node 의 `RAW_VT` 모드 등) conhost 가 레코드를 **다시 VT 로 번역해서** 준다
+(`inputBuffer.cpp`: `if (vtInputMode) { _termInput.HandleKey(...) }`). 그 번역은 `UnicodeChar` 를
+보지 않고 가상 키만 본다(`terminalInput.cpp` 의 `case VK_RETURN`).
+
+| 보내는 키 | 레코드를 읽는 쪽 (`codex` → crossterm) | VT 로 번역되는 쪽 |
+| --- | --- | --- |
+| `Shift+Enter` | `(Enter, SHIFT)` → 줄바꿈 ✓ | `\r` → **제출** ✗ |
+| `Ctrl+Enter` · `Ctrl+Shift+Enter` | `(Enter, CTRL[, SHIFT])` → 아무것도 아님 ✗ | `\n` ✓ |
+| `Ctrl+M` | `(Char('m'), CTRL)` → 줄바꿈 ✓ | `\r` → **제출** ✗ |
+| **`Ctrl+J`** | `(Char('j'), CTRL)` → 줄바꿈 ✓ | `\n` ✓ |
+
+`Ctrl+J` 만 양쪽에서 줄바꿈이다.
+
+- **레코드를 읽는 쪽** (`codex` → crossterm): `VK_J` + `LEFT_CTRL_PRESSED` →
+  `KeyEvent{ Char('j'), CONTROL }`. crossterm 은 특수 키가 아닌 가상 키에 대해
+  `ToUnicodeEx(vk, sc, 수정자 없음)` 으로 "그 키의 맨 글자" 를 되찾으므로 `'j'` 가 나온다
+  (`event/sys/windows/parse.rs` 의 `get_char_for_key`). 그것이 codex 줄바꿈 목록의 첫 항목인
+  `ctrl(Char('j'))` 다(`keymap.rs` 의 `editor.insert_newline`). 제출은 `plain(Enter)` 하나뿐이라
+  (`chat_composer.rs` 의 `submit_keys`) 스칠 일이 없다.
+  윈도우에서는 crossterm 의 `supports_keyboard_enhancement()` 가 늘 `Ok(false)` 라
+  (`terminal/sys/windows.rs`: "This always returns `Ok(false)` on Windows") kitty 키보드
+  프로토콜 길이 아예 막혀 있고, 이 길만 남는다.
+- **VT 로 번역되는 쪽** (`wsl.exe`·`ssh.exe` 등): `VK_J` 는 문자 키이고 Ctrl 이 눌려 있으므로
+  그 제어문자 `0x0a` 가 나간다 — 예전과 **똑같은** 순수 LF 다. WSL·SSH 안의 리눅스 `codex` 는
+  그 LF 를 다시 `Ctrl+J`(역시 줄바꿈 자리)로 읽는다.
+- **레코드를 바이트로 펴는 쪽** (`claude` → Node/libuv 의 `RAW` 모드): `UnicodeChar` 가 0 이
+  아니면 그 글자를 그대로 내보낸다(`uv_tty_read`). 여기에 LF 를 실어 두었으니 역시 LF 다.
+
+뗌까지 보내는 것도 이유가 있다. conhost 는 앞뒤로 붙은 같은 눌림 레코드를 하나로 합치면서
+`wRepeatCount` 만 올리는데(`inputBuffer.cpp` 의 `_CoalesceEvent`), crossterm 은 `wRepeatCount` 를
+보지 않아 레코드 하나당 이벤트 하나만 만든다. 사이에 뗌이 끼지 않으면 빠르게 두 번 누른 줄바꿈이
+한 번으로 삼켜진다. 뗌 자체는 어디에서도 글자를 만들지 않는다 — VT 번역은 뗌에서 곧바로 돌아가고
+(`terminalInput.cpp` 의 `if (!key.keyDown)`), codex 는 `KeyEventKind::Release` 를 거르고,
+libuv 는 뗌을 아예 무시한다.
+
+모드를 청하지 않은 상대에게는 win32 시퀀스를 들이밀지 않고 예전처럼 LF 한 바이트만 보낸다.
+Claude Code 공식 `/terminal-setup` 이 쓰는 `ESC+CR`(메타+엔터) 관례는 쓰지 않는다 — `codex` 는
+그 조합을 그냥 제출로 읽는다.
+
+> **왜 LF 만으로는 부족했나.** 보내려는 키가 결국 `Ctrl+J` 인데도 이 모드가 필요한 까닭은,
+> ConPTY 의 바이트→레코드 되짚기가 손실이 있기 때문이다. C0 제어문자는 `VkKeyScanW` 로 되짚어
+> 키를 찾는데(`InputStateMachineEngine::_GenerateKeyFromChar`), `'\n'` 에 대응하는 키가 자판에
+> 없다. 그래서 클라이언트에게는 `Ctrl+J` 가 아니라 **가상 키와 수정자가 어긋난 이벤트**가
+> 도착하고, 그 뒤는 프로그램마다 다른 예비 경로에 맡겨진다. 같은 키를 이 모드로 보내면 되짚기를
+> 건너뛰고 값이 그대로 전해진다.
+
+줄바꿈은 붙여넣기처럼 스크롤을 바닥으로 돌려놓는다 — 스크롤을 올려 둔 채 줄을 넣으면 xterm 이
+원래 하는 자동 스크롤을 우리가 가로채는 키 처리기가 건너뛰기 때문에, 우리가 대신 해 준다.
+
+### 하이퍼링크
+
+`OSC 8` 하이퍼링크와 평범한 글자 속 `http(s)` 주소를 **`Ctrl+클릭`** 으로 연다(윈도우 터미널과
+같은 규칙). **주 버튼**으로만 연다 — 우클릭(창 메뉴)·가운데 클릭(붙여넣기)에도 같은 처리기가
+불리기 때문이다. 마우스를 올리면 **실제 주소**가 칩으로 뜬다.
+
+조심할 것이 둘 있다.
+
+- xterm 은 `linkHandler` 를 주지 않으면 자기 기본 동작(`OscLinkProvider.ts` 의
+  `defaultActivate`)으로 물러나는데, 그것은 ① 번역되지 않은 영어 `confirm()` 을 띄우고
+  ② 수정자를 요구하지 않아 지나가는 클릭에도 열리며 ③ `window.open()` 으로 연다. Tauri
+  웹뷰(WebView2)에서 그것이 무엇을 여는지는 앱이 정하지 않고, 무엇보다 우리 주소 검사를
+  지나지 않는다. 그래서 처리기를 반드시 우리가 준다.
+- 주소를 정하는 것은 화면 속 프로그램이고, `OSC 8` 은 **보이는 글자와 실제 주소를 따로 싣는다.**
+  `ESC]8;;https://evil.tld ESC\ https://github.com ESC]8;; ESC\` 는 github 주소로 보이면서
+  evil.tld 로 간다. 스킴 검사로는 못 잡으므로 `Ctrl` 을 요구하고 실제 주소를 눈에 보여 준다.
+
+넘기기 전에 화면 쪽에서 `new URL()` 로 ASCII 로 정규화한다 — xterm 은 한글 경로·IDN 호스트가 든
+주소도 링크로 내주는데(`OscLinkProvider.ts` 의 걸러내기도 `new URL()` 하나뿐이다) Rust 검사는
+ASCII 만 받아서, 그러지 않으면 눌러도 오류만 뜬다.
+
+실제 열기는 Rust(`commands/link.rs`)가 `http`·`https` 만 통과시킨 뒤 `explorer.exe <url>` 로 한다.
+다른 스킴은 윈도우의 임의 처리기로 이어진다(`ms-msdt:` · `search-ms:` · `shell:` · `file:`,
+UNC 경로는 NTLM 을 흘린다). 셸을 거치지 않는 것도 의도다 — `cmd /C start` 는 인자 규칙이 달라
+표준 라이브러리의 이스케이프가 통하지 않는다.
 
 ## 테스트
 
 ```bash
-cd src-tauri && cargo test --workspace   # 101개 — 레이아웃 대수 · 스냅샷 · PTY · VT 코어 · OSC 스캐너 · 셸 통합 · AI 감지
-pnpm test                                # 204개 — 마크다운 · IME · 편집 기록 · 이미지 · 병합/크기 드래그 · 클립보드 · 줄바꿈 · 스크롤 막대
+cd src-tauri && cargo test --workspace   # 122개 — 레이아웃 대수 · 스냅샷 · PTY · VT 코어 · OSC 스캐너 · 셸 통합 · AI 감지 · 링크 검사
+pnpm test                                # 255개 — 마크다운 · IME · 편집 기록 · 이미지 · 병합/크기 드래그 · 클립보드 · 줄바꿈 · 스크롤 막대 · 배색 대비 · 하이퍼링크
 ```
 
 `src-tauri/tests/terminal_pipeline.rs` 는 실제 ConPTY 를 띄워
@@ -370,6 +525,7 @@ PTY → 코어 → 직렬화 → 재주입 복원까지 한 번에 확인한다.
 - **파일 저장** — 디자인에 없던 `Ctrl+S` 를 추가했다. `.md` 는 원문 그대로, 리치 텍스트는
   평문으로 되돌려 쓴다(소스 파일에 서식 마크업을 남기지 않기 위함).
 - **시드 데이터** — 디자인의 데모 3세션 대신 홈 디렉터리 기준 세션 하나로 시작한다.
+  그 세션은 빈 블럭이 아니라 터미널 하나가 세션을 가득 채운 모습으로 열린다.
 - **내장 명령** — 디자인의 `help`/`ls`/`cat` 흉내는 없다. 실제 셸이 처리한다.
 - **이미지 뷰어** — 디자인에 없던 창 종류다. 병합 규칙에서는 터미널·에디터와 똑같이
   "열린 프로그램" 으로 센다.

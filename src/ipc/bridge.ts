@@ -96,6 +96,12 @@ export const writePty = (paneId: string, data: string) => invoke<void>('pty_writ
 export const resizePty = (paneId: string, cols: number, rows: number) =>
   invoke<void>('pty_resize', { paneId, cols, rows });
 
+/**
+ * 스크롤백을 버린다. **화면 쪽 `Terminal.clear()` 과 짝으로 불러야 한다** —
+ * Rust 버퍼를 그대로 두면 세션을 다녀올 때 방금 버린 줄이 되살아난다.
+ */
+export const clearPtyScrollback = (paneId: string) => invoke<void>('pty_clear', { paneId });
+
 // ── 파일 ─────────────────────────────────────────────────
 export const listFiles = (cwd: string) => invoke<FileEntry[]>('fs_list', { cwd });
 
@@ -110,6 +116,15 @@ export const setPaneContent = (sessionId: string, paneId: string, content: strin
   invoke<void>('pane_set_content', { sessionId, paneId, content });
 export const savePane = (sessionId: string, paneId: string) =>
   invoke<SaveResult>('pane_save', { sessionId, paneId });
+
+// ── 하이퍼링크 ───────────────────────────────────────────
+/**
+ * 터미널이 그린 주소를 OS 기본 브라우저로 넘긴다.
+ *
+ * 웹뷰의 `window.open` 은 Tauri(WebView2)에서 무엇을 열지 앱이 정하지 않는다 — 막히거나 앱이
+ * 다루지 않는 팝업이 뜬다. 주소 검사도 Rust 에서 한다 (`commands/link.rs`).
+ */
+export const openExternalUrl = (url: string) => invoke<void>('link_open', { url });
 
 // ── 클립보드 ─────────────────────────────────────────────
 //
