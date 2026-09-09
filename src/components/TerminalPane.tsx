@@ -9,6 +9,7 @@ import { Terminal } from '@xterm/xterm';
 
 import {
   Channel,
+  clearPtyScrollback,
   detachPty,
   openExternalUrl,
   openPty,
@@ -214,8 +215,10 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
           } else if (action === 'select-all') {
             term.selectAll();
           } else if (action === 'clear') {
-            // 윈도우 터미널의 "버퍼 지우기" — 보이는 화면은 남기고 스크롤백만 버린다.
+            // 윈도우 터미널의 "버퍼 지우기"(Ctrl+Shift+K) — 프롬프트 줄만 남기고 버린다.
+            // Rust 버퍼도 함께 비워야 세션을 다녀왔을 때 되살아나지 않는다.
             term.clear();
+            void clearPtyScrollback(pane.id).catch(() => {});
             flash('스크롤백을 비웠습니다');
           } else if (action === 'newline') {
             // ConPTY 가 win32-input-mode 를 청했으면 진짜 Shift+Enter 키 이벤트로, 아니면 예전처럼

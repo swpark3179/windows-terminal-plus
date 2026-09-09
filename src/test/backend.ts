@@ -185,6 +185,7 @@ export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> 
       return { restored: '', banner: '', attached: false };
     case 'pty_write':
     case 'pty_resize':
+    case 'pty_clear':
     case 'pty_detach':
     case 'set_sidebar_open':
     case 'snapshot_flush':

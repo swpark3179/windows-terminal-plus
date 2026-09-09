@@ -294,7 +294,7 @@ describe('win32-input-mode', () => {
 });
 
 describe('스크롤백 조작', () => {
-  it('Ctrl+Shift+A 는 모두 선택, Ctrl+Shift+K 는 버퍼 비우기다', () => {
+  it('Ctrl+Shift+A 는 모두 선택, Ctrl+Shift+K 는 버퍼 비우기다', async () => {
     const { term, press } = mount();
 
     expect(press({ key: 'A', ctrlKey: true, shiftKey: true })).toBe(false);
@@ -302,6 +302,8 @@ describe('스크롤백 조작', () => {
 
     expect(press({ key: 'K', ctrlKey: true, shiftKey: true })).toBe(false);
     expect(term.clearedBuffer).toBe(1);
+    // Rust 버퍼도 함께 비워야 세션을 다녀왔을 때 되살아나지 않는다.
+    await waitFor(() => expect(backend.lastArgs('pty_clear')).toEqual({ paneId: 'p-term' }));
   });
 
   it('Shift 없는 Ctrl+A · Ctrl+K 는 셸의 것이다 — 줄 처음 이동과 줄 끝 지우기', () => {

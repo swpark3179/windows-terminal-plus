@@ -96,6 +96,12 @@ export const writePty = (paneId: string, data: string) => invoke<void>('pty_writ
 export const resizePty = (paneId: string, cols: number, rows: number) =>
   invoke<void>('pty_resize', { paneId, cols, rows });
 
+/**
+ * 스크롤백을 버린다. **화면 쪽 `Terminal.clear()` 과 짝으로 불러야 한다** —
+ * Rust 버퍼를 그대로 두면 세션을 다녀올 때 방금 버린 줄이 되살아난다.
+ */
+export const clearPtyScrollback = (paneId: string) => invoke<void>('pty_clear', { paneId });
+
 // ── 파일 ─────────────────────────────────────────────────
 export const listFiles = (cwd: string) => invoke<FileEntry[]>('fs_list', { cwd });
 

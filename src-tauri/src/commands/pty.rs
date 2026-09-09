@@ -389,6 +389,24 @@ pub fn pty_write(state: State<'_, AppState>, pane_id: String, data: String) -> R
     slot.pty.write(data.as_bytes()).map_err(|e| e.to_string())
 }
 
+/// 스크롤백을 버린다 (윈도우 터미널의 "버퍼 지우기").
+///
+/// **Rust 쪽 버퍼도 함께 비워야 한다.** 화면의 xterm 만 비우면 스냅샷은 여전히 옛 줄을 들고
+/// 있어서, 세션을 다녀오거나 앱을 다시 켜면 방금 버린 것이 되살아난다 — `pty_open` 이
+/// 재연결할 때 `serialize_scrollback` 을 다시 써 주기 때문이다.
+///
+/// 화면 쪽은 프론트엔드가 `Terminal.clear()` 로 비운다. 코어에는 같은 뜻의 시퀀스를 먹인다:
+/// `CUP`(커서를 맨 위로) · `ED 2`(화면) · `ED 3`(저장된 줄).
+#[tauri::command]
+pub fn pty_clear(state: State<'_, AppState>, pane_id: String) -> Result<(), String> {
+    let terms = state.terminals.lock();
+    let slot = terms
+        .get(&pane_id)
+        .ok_or_else(|| "터미널이 열려 있지 않습니다".to_string())?;
+    slot.core.lock().feed(b"\x1b[H\x1b[2J\x1b[3J");
+    Ok(())
+}
+
 #[tauri::command]
 pub fn pty_resize(
     state: State<'_, AppState>,
@@ -501,6 +519,26 @@ mod tests {
         assert!(m.integration, "마커를 봤으면 통합이 켜진다");
         assert_eq!(m.cwd.as_deref(), Some("/tmp/work"));
         assert_eq!(m.prompt_seq, 1, "프롬프트가 한 번 돌았다");
+    }
+
+    #[test]
+    fn the_clear_sequence_really_drops_the_rust_scrollback() {
+        // `pty_clear` 가 코어에 먹이는 시퀀스가 실제로 통하는지 — 통하지 않으면 화면만 비워지고
+        // 다음 재연결에서 옛 줄이 되살아난다.
+        let mut core = TermCore::new(20, 3, 100);
+        for i in 0..30 {
+            core.feed(format!("line {i}\r\n").as_bytes());
+        }
+        assert!(
+            core.serialize_scrollback(SCROLLBACK_LINES).contains("line 0"),
+            "먼저 스크롤백에 쌓여 있어야 한다"
+        );
+
+        core.feed(b"\x1b[H\x1b[2J\x1b[3J");
+
+        let after = core.serialize_scrollback(SCROLLBACK_LINES);
+        assert!(!after.contains("line 0"), "저장된 줄이 남아 있다: {after:?}");
+        assert!(!after.contains("line 29"), "화면도 비워져야 한다: {after:?}");
     }
 
     #[test]

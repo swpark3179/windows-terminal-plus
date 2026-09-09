@@ -59,6 +59,7 @@ pub fn run() {
             commands::pty::pty_detach,
             commands::pty::pty_write,
             commands::pty::pty_resize,
+            commands::pty::pty_clear,
             commands::files::fs_list,
             commands::files::fs_read_image,
             commands::files::pane_set_image_zoom,
