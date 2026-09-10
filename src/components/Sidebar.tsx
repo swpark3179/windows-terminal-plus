@@ -7,7 +7,7 @@ export function Sidebar() {
   const query = useStore((s) => s.query);
   const setQuery = useStore((s) => s.setQuery);
   const toggleSidebar = useStore((s) => s.toggleSidebar);
-  const newSession = useStore((s) => s.newSession);
+  const openNewSession = useStore((s) => s.openNewSession);
   const activate = useStore((s) => s.activateSession);
   const openContext = useStore((s) => s.openContext);
 
@@ -39,7 +39,7 @@ export function Sidebar() {
           className="rail__btn rail__btn--accent"
           title="새 세션 · Ctrl+Shift+T"
           aria-label="새 세션"
-          onClick={() => void newSession()}
+          onClick={openNewSession}
         >
           ＋
         </button>
@@ -79,7 +79,7 @@ export function Sidebar() {
           className="icon-btn icon-btn--accent"
           title="새 세션 · Ctrl+Shift+T"
           aria-label="새 세션"
-          onClick={() => void newSession()}
+          onClick={openNewSession}
         >
           ＋
         </button>

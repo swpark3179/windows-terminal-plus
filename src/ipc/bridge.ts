@@ -11,6 +11,7 @@ import type {
   Boot,
   FileEntry,
   ImageDoc,
+  InheritCwd,
   TrackAxis,
   MdMode,
   MergeResult,
@@ -30,7 +31,8 @@ export const resetSnapshot = () => invoke<Snapshot>('snapshot_reset');
 export const setSidebarOpen = (open: boolean) => invoke<number>('set_sidebar_open', { open });
 
 // ── 세션 ────────────────────────────────────────────────
-export const createSession = () => invoke<Snapshot>('session_create');
+/** 만들기 창에서 받은 이름으로 세션을 만든다. 비워 두면 Rust 가 `새 세션 N` 으로 짓는다. */
+export const createSession = (name?: string) => invoke<Snapshot>('session_create', { name });
 export const duplicateSession = (sessionId: string) =>
   invoke<Snapshot>('session_duplicate', { sessionId });
 export const deleteSession = (sessionId: string) => invoke<Snapshot>('session_delete', { sessionId });
@@ -63,8 +65,17 @@ export const resetTrackWeights = (sessionId: string) =>
 export const closePane = (sessionId: string, paneId: string) =>
   invoke<Snapshot>('pane_close', { sessionId, paneId });
 
-export const openTerminalPane = (sessionId: string, paneId: string) =>
-  invoke<Snapshot>('pane_open_terminal', { sessionId, paneId });
+/**
+ * 빈 블럭에 터미널을 연다.
+ *
+ * `inherit` 은 나눠 준 터미널의 폴더를 물려받겠다는 요청이다 — 그 터미널이 아직 그 폴더에
+ * 서 있는지는 Rust 가 셸의 실시간 값으로 다시 확인하고, 옮겼으면 세션 폴더에서 띄운다.
+ */
+export const openTerminalPane = (
+  sessionId: string,
+  paneId: string,
+  inherit: InheritCwd | null = null,
+) => invoke<Snapshot>('pane_open_terminal', { sessionId, paneId, inherit });
 
 export const setPaneZoom = (sessionId: string, paneId: string, zoom: number) =>
   invoke<Snapshot>('pane_set_zoom', { sessionId, paneId, zoom });

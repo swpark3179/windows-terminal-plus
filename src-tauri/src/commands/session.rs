@@ -19,12 +19,21 @@ pub struct SessionPatch {
     pub env: Option<Vec<EnvVar>>,
 }
 
+/// 세션을 만든다.
+///
+/// `name` 은 만들기 창에서 받은 이름이다. 비어 있거나 오지 않았으면 `새 세션 N` 으로 짓는다 —
+/// 이름을 묻지 않는 길(첫 실행의 씨앗 세션 등)에서도 이름이 비지 않게.
 #[tauri::command]
-pub fn session_create(state: State<'_, AppState>) -> Snapshot {
+pub fn session_create(state: State<'_, AppState>, name: Option<String>) -> Snapshot {
     let (name, cwd, color) = {
         let snap = state.snapshot.lock();
         let n = snap.sessions.len();
-        (format!("새 세션 {}", n + 1), state.home.clone(), n)
+        let given = name.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        (
+            given.unwrap_or_else(|| format!("새 세션 {}", n + 1)),
+            state.home.clone(),
+            n,
+        )
     };
     let mut session = Session::new(name, cwd, color);
     // 새 세션은 곧바로 쓸 수 있어야 한다 — 터미널 하나를 세션 전체화면으로 띄운 채 시작한다.

@@ -654,16 +654,16 @@ fn starting_a_session_that_already_has_something_open_changes_nothing() {
 fn open_terminal_only_accepts_an_empty_block() {
     let mut s = session();
     let a = s.panes[0].id.clone();
-    layout::open_terminal(&mut s, &a).expect("빈 블럭이므로 열린다");
+    layout::open_terminal(&mut s, &a, None).expect("빈 블럭이므로 열린다");
     assert_eq!(s.pane(&a).unwrap().kind, PaneKind::Term);
 
     assert_eq!(
-        layout::open_terminal(&mut s, &a),
+        layout::open_terminal(&mut s, &a, None),
         Err(LayoutError::NotEmpty),
         "이미 무엇인가 열린 창은 덮어쓰지 않는다"
     );
     assert_eq!(
-        layout::open_terminal(&mut s, "p_없는창"),
+        layout::open_terminal(&mut s, "p_없는창", None),
         Err(LayoutError::PaneNotFound)
     );
 }
@@ -677,9 +677,48 @@ fn opening_a_terminal_in_a_hidden_block_returns_to_window_mode() {
     occupy(&mut s, &a, PaneKind::Term);
     set_full(&mut s, Some(&a)).unwrap();
 
-    layout::open_terminal(&mut s, &b).expect("빈 블럭에 열린다");
+    layout::open_terminal(&mut s, &b, None).expect("빈 블럭에 열린다");
 
     assert_eq!(s.full_pane_id, None);
+}
+
+#[test]
+fn a_fresh_terminal_starts_in_the_session_folder() {
+    // 물려받은 폴더가 없으면 창은 아무 폴더도 기억하지 않는다 —
+    // `pty_open` 의 `resolve_cwd` 가 세션 설정의 폴더를 쓴다.
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    s.pane_mut(&a).unwrap().cwd = Some("C:/전에/쓰던/곳".into());
+
+    layout::open_terminal(&mut s, &a, None).expect("빈 블럭이므로 열린다");
+
+    assert_eq!(s.pane(&a).unwrap().cwd, None);
+}
+
+#[test]
+fn a_terminal_can_inherit_the_folder_it_was_split_from() {
+    // 터미널을 나눈 자리에서 곧바로 터미널을 열면 나눠 준 터미널의 폴더에서 시작한다.
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    let b = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+
+    layout::open_terminal(&mut s, &b, Some(" C:/work/rterm/src ")).expect("빈 블럭에 열린다");
+
+    assert_eq!(
+        s.pane(&b).unwrap().cwd.as_deref(),
+        Some("C:/work/rterm/src"),
+        "앞뒤 공백은 다듬어 적는다"
+    );
+    assert_eq!(
+        s.pane(&b).unwrap().ai,
+        None,
+        "폴더만 물려받는다 — AI 를 대신 띄우지는 않는다"
+    );
+
+    // 빈 문자열은 물려받을 것이 없는 것과 같다.
+    let c = split(&mut s, &b, SplitDir::TopBottom).unwrap();
+    layout::open_terminal(&mut s, &c, Some("   ")).expect("빈 블럭에 열린다");
+    assert_eq!(s.pane(&c).unwrap().cwd, None);
 }
 
 #[test]

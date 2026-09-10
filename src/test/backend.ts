@@ -14,6 +14,10 @@ export const TEXT_PANE = 'p-text';
 export const NEW_SESSION = 'ses_new';
 export const NEW_TERM_PANE = 'p-new-term';
 export const NEW_FILE_PANE = 'p-new-file';
+/** 터미널을 나눠 갓 생긴 빈 블럭. */
+export const SPLIT_PANE = 'p-split';
+/** 그 터미널이 서 있는 폴더 — 나눈 자리가 물려받을 값. */
+export const TERM_CWD = 'C:/work/rterm/src';
 
 function pane(id: string, over: Partial<Pane>): Pane {
   return {
@@ -79,6 +83,30 @@ export function withNewSession(): Snapshot {
     fullPaneId: NEW_TERM_PANE,
   };
   return { ...snap, sessions: [...snap.sessions, fresh], activeId: NEW_SESSION };
+}
+
+/**
+ * 터미널 창을 위·아래로 나눈 뒤의 스냅샷.
+ *
+ * 나눠 준 터미널은 셸 통합으로 폴더를 알려 준 상태다 — 갓 생긴 빈 블럭이 물려받을 값.
+ */
+export function withSplitTerminal(): Snapshot {
+  const snap = makeSnapshot();
+  const session = snap.sessions[0];
+  session.grid = { cols: 2, rows: 2, colWeights: [1, 1], rowWeights: [1, 1] };
+  session.panes = [
+    pane(TERM_PANE, {
+      kind: 'term',
+      title: 'pwsh · 새 터미널',
+      alive: true,
+      r: 1,
+      c: 1,
+      cwd: TERM_CWD,
+    }),
+    pane(SPLIT_PANE, { r: 2, c: 1 }),
+    pane(EMPTY_PANE, { r: 1, c: 2, rs: 2 }),
+  ];
+  return snap;
 }
 
 /** 두 번째 칸이 저장되지 않은 텍스트 편집기인 스냅샷. */
@@ -195,6 +223,24 @@ export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> 
       const paneId = (args as { paneId?: string | null } | undefined)?.paneId ?? null;
       const session = { ...backend.snapshot.sessions[0], fullPaneId: paneId };
       backend.snapshot = { ...backend.snapshot, sessions: [session] };
+      return backend.snapshot;
+    }
+    case 'layout_split':
+      // Rust 는 나눈 결과와 갓 생긴 빈 블럭의 id 를 함께 돌려준다.
+      backend.snapshot = withSplitTerminal();
+      return { snapshot: backend.snapshot, newPaneId: SPLIT_PANE };
+    case 'pane_open_terminal': {
+      // 물려받기 판정은 Rust 가 셸의 실시간 폴더로 한다. 여기서는 받은 대로 적어 준다.
+      const a = args as { paneId?: string; inherit?: { cwd: string } | null } | undefined;
+      const sessions = backend.snapshot.sessions.map((s) => ({
+        ...s,
+        panes: s.panes.map((p) =>
+          p.id === a?.paneId
+            ? { ...p, kind: 'term' as const, title: 'pwsh · 새 터미널', alive: true, cwd: a?.inherit?.cwd ?? null }
+            : p,
+        ),
+      }));
+      backend.snapshot = { ...backend.snapshot, sessions };
       return backend.snapshot;
     }
     case 'session_create':

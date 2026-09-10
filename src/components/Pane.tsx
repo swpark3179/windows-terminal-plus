@@ -1,4 +1,5 @@
-import { useStore } from '../state/store';
+import { inheritForPane } from '../lib/paneCwd';
+import { activePanes, useStore } from '../state/store';
 import { KIND_STYLE, ZOOM_BASE, type Pane, type Session } from '../state/types';
 import { ImagePane } from './ImagePane';
 import { MarkdownPane } from './MarkdownPane';
@@ -10,6 +11,10 @@ function EmptyBody({ pane }: { pane: Pane }) {
   const openTerminal = useStore((s) => s.openTerminal);
   const openPicker = useStore((s) => s.openPicker);
   const openNewFile = useStore((s) => s.openNewFile);
+  // 터미널을 나눠 갓 생긴 블럭이면 여기서 여는 터미널은 그 폴더에서 뜬다 (`lib/paneCwd.ts`).
+  const snapshot = useStore((s) => s.snapshot);
+  const pendingCwd = useStore((s) => s.pendingCwd);
+  const inherit = inheritForPane(activePanes(snapshot), pendingCwd, pane.id);
 
   return (
     <div className="empty-body">
@@ -45,7 +50,11 @@ function EmptyBody({ pane }: { pane: Pane }) {
           ✚ 새 파일
         </button>
       </div>
-      <div className="empty-body__hint">파일을 이 블럭으로 드래그해도 열립니다</div>
+      <div className="empty-body__hint" title={inherit?.cwd}>
+        {inherit
+          ? `터미널은 직전 터미널 폴더에서 시작합니다 · ${inherit.cwd}`
+          : '파일을 이 블럭으로 드래그해도 열립니다'}
+      </div>
     </div>
   );
 }

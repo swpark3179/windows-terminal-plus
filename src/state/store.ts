@@ -8,6 +8,7 @@
 import { create } from 'zustand';
 import * as api from '../ipc/bridge';
 import { loadPrefs, savePrefs } from '../lib/mdView';
+import { inheritForPane, inheritFromSplit, type PendingCwd } from '../lib/paneCwd';
 import type {
   MdMode,
   MdPrefs,
@@ -64,6 +65,8 @@ interface AppState {
   picker: { paneId: string } | null;
   /** 새 파일을 만들 빈 블럭. */
   newFile: { paneId: string } | null;
+  /** 세션 이름을 묻는 중 — 이름을 받아야 세션이 만들어진다. */
+  newSession: boolean;
   settings: boolean;
   toast: string | null;
   /** OS 에서 파일을 끌어오는 중. */
@@ -82,6 +85,11 @@ interface AppState {
   liveTitles: Record<string, string>;
   /** 마크다운 뷰어 표시 설정 — 창이 아니라 앱 전체의 것. */
   mdPrefs: MdPrefs;
+  /**
+   * 분할로 갓 생긴 빈 블럭이 물려받을 폴더 (`lib/paneCwd.ts`).
+   * 스냅샷을 갈아 끼우는 모든 길(`apply`)이 이것을 지운다 — 분할 직후에만 유효하다.
+   */
+  pendingCwd: PendingCwd | null;
 
   // ── 액션 ────────────────────────────────────
   boot: () => Promise<void>;
@@ -128,7 +136,11 @@ interface AppState {
   setMdMode: (paneId: string, mode: MdMode) => Promise<void>;
   savePane: (paneId: string) => Promise<void>;
 
-  newSession: () => Promise<void>;
+  /** 세션 이름을 묻는 창을 연다. 세션은 이름을 받은 뒤에 만들어진다. */
+  openNewSession: () => void;
+  closeNewSession: () => void;
+  /** 이름을 받아 세션을 만든다. 성공하면 `true`. */
+  createSession: (name: string) => Promise<boolean>;
   activateSession: (id: string) => Promise<void>;
   duplicateSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
@@ -189,6 +201,7 @@ export const useStore = create<AppState>((set, get) => ({
   paletteSel: 0,
   picker: null,
   newFile: null,
+  newSession: false,
   settings: false,
   toast: null,
   fileDrop: false,
@@ -196,6 +209,7 @@ export const useStore = create<AppState>((set, get) => ({
   resizeDraft: null,
   liveTitles: {},
   mdPrefs: loadPrefs(),
+  pendingCwd: null,
 
   boot: async () => {
     const boot = await api.bootApp();
@@ -227,10 +241,13 @@ export const useStore = create<AppState>((set, get) => ({
       // 여기를 지나므로, 각자 지우게 하는 것보다 한 곳에서 훑는 것이 새지 않는다.
       const ids = new Set(snapshot.sessions.flatMap((x) => x.panes.map((p) => p.id)));
       const stale = Object.keys(s.liveTitles).filter((id) => !ids.has(id));
-      if (stale.length === 0) return { snapshot };
+      // 물려받을 폴더의 기억(`pendingCwd`)도 여기서 끝난다 — 파일을 열었든 창을 닫았든
+      // 세션을 옮겼든, 상태를 바꾼 일이 하나라도 있었으면 "분할 직후" 가 아니다.
+      // 분할 자신은 이 뒤에 새 기억을 심는다(`splitPane`).
+      if (stale.length === 0) return { snapshot, pendingCwd: null };
       const liveTitles = { ...s.liveTitles };
       for (const id of stale) delete liveTitles[id];
-      return { snapshot, liveTitles };
+      return { snapshot, liveTitles, pendingCwd: null };
     }),
 
   flash: (message) => {
@@ -283,7 +300,12 @@ export const useStore = create<AppState>((set, get) => ({
     await guard(async () => {
       const res = await api.splitPane(snapshot.activeId, paneId, dir);
       apply(res.snapshot);
-      set({ sel: res.newPaneId });
+      // 터미널을 나눴다면 대개 "지금 이 폴더에서 하나 더" 라는 뜻이다. 갓 생긴 빈 블럭이
+      // 곧바로 터미널이 될 때만 쓰이고, 그 사이 다른 일이 있으면 `apply` 가 지운다.
+      set({
+        sel: res.newPaneId,
+        pendingCwd: inheritFromSplit(activePanes(res.snapshot), paneId, res.newPaneId),
+      });
       flash(dir === 'leftRight' ? '좌·우로 분할' : '위·아래로 분할');
     }, flash);
   },
@@ -443,11 +465,21 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   openTerminal: async (paneId) => {
-    const { snapshot, flash, apply } = get();
+    const { snapshot, flash, apply, pendingCwd } = get();
     if (!snapshot) return;
+    const inherit = inheritForPane(activePanes(snapshot), pendingCwd, paneId);
     await guard(async () => {
-      apply(await api.openTerminalPane(snapshot.activeId, paneId));
+      const next = await api.openTerminalPane(
+        snapshot.activeId,
+        paneId,
+        inherit ? { sourcePaneId: inherit.sourceId, cwd: inherit.cwd } : null,
+      );
+      apply(next);
       set({ sel: paneId });
+      // 물려받기는 Rust 가 셸의 실시간 폴더로 한 번 더 판정한다. 그래서 "물려받았다" 는
+      // 말은 돌아온 스냅샷에 폴더가 적혀 있을 때만 한다.
+      const opened = activePanes(next).find((p) => p.id === paneId);
+      if (inherit && opened?.cwd) flash(`직전 터미널 폴더에서 시작 · ${opened.cwd}`);
     }, flash);
   },
 
@@ -559,16 +591,20 @@ export const useStore = create<AppState>((set, get) => ({
     }, flash);
   },
 
-  newSession: async () => {
+  openNewSession: () => set({ newSession: true, ctx: null, palette: false }),
+  closeNewSession: () => set({ newSession: false }),
+
+  createSession: async (name) => {
     const { flash, apply } = get();
-    await guard(async () => {
-      const snapshot = await api.createSession();
+    try {
+      const snapshot = await api.createSession(name.trim());
       apply(snapshot);
       // Rust 가 새 세션을 "터미널 하나가 세션을 가득 채운" 모습으로 세워 준다
       // (`layout::start_full_terminal`). 그 창을 고른 상태로 둬야 Ctrl+Shift+F · Ctrl+휠 처럼
       // "고른 창" 을 대상으로 하는 조작이 곧바로 듣는다.
       const session = activeSession(snapshot);
       set({
+        newSession: false,
         sel: session?.fullPaneId ?? session?.panes[0]?.id ?? null,
         editMode: false,
         op: null,
@@ -577,8 +613,13 @@ export const useStore = create<AppState>((set, get) => ({
       });
       // 설정 모달을 띄우지 않는다 — 방금 띄운 터미널을 곧바로 덮어 버리기 때문이다.
       // 대신 어디서 열 수 있는지 알려 준다 (Ctrl+, 는 터미널 안에서도 앱이 가져간다).
-      flash('새 세션 · 터미널 전체화면으로 시작 · 세션 설정은 Ctrl+,');
-    }, flash);
+      flash(`새 세션 · ${session?.name ?? name.trim()} · 세부 설정은 Ctrl+,`);
+      return true;
+    } catch (e) {
+      // 만들지 못했으면 창을 닫지 않는다 — 이름을 고쳐 다시 누를 수 있게.
+      flash(typeof e === 'string' ? e : '세션을 만들 수 없습니다');
+      return false;
+    }
   },
 
   activateSession: async (id) => {
@@ -672,6 +713,7 @@ export const useStore = create<AppState>((set, get) => ({
       ctx: null,
       picker: null,
       newFile: null,
+      newSession: false,
       settings: false,
       palette: false,
       confirm: null,

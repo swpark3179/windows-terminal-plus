@@ -111,6 +111,24 @@ impl AppState {
         }
     }
 
+    /// 이 창의 셸이 **지금** 서 있다고 알려 주는 폴더.
+    ///
+    /// 스냅샷의 `pane.cwd` 는 명령이 오갈 때만 갱신되므로, 그 사이에 사용자가 `cd` 한 것을
+    /// 알아채려면 슬롯의 실시간 값을 봐야 한다. 셸 통합 마커를 못 봤거나 셸이 끝났으면
+    /// 아는 것이 없다는 뜻으로 `None`.
+    pub fn live_cwd(&self, pane_id: &str) -> Option<String> {
+        let terms = self.terminals.lock();
+        let slot = terms.get(pane_id)?;
+        if !slot.pty.is_alive() {
+            return None;
+        }
+        let meta = slot.meta.lock();
+        if !meta.integration {
+            return None;
+        }
+        meta.cwd.clone()
+    }
+
     /// 창마다 지금 돌고 있는 AI CLI 를 스냅샷에 적어 둔다.
     ///
     /// 프로세스 목록을 한 번 훑으므로 flush 에서만 부른다. 종료 시점의 flush 는
