@@ -13,16 +13,26 @@ import { useEffect, useRef, useState } from 'react';
 interface TextFieldProps {
   value: string;
   onCommit: (next: string) => void;
+  /**
+   * 엔터를 쳤을 때. 마지막 값을 먼저 `onCommit` 으로 내보낸 뒤에 불린다 — 받는 쪽이
+   * 이어서 저장해도 방금 친 글자가 빠지지 않는다. 조합 중(한글 확정)의 엔터는 무시한다.
+   */
+  onSubmit?: (next: string) => void;
   placeholder?: string;
   className?: string;
   title?: string;
-  /** 보내기 전 기다리는 시간. 타자마다 IPC 가 나가지 않게 한다. */
+  /**
+   * 보내기 전 기다리는 시간. 타자마다 IPC 가 나가지 않게 한다.
+   * `0` 이면 글자마다 곧바로 내보낸다 — 값이 밖(IPC)이 아니라 화면 안의 초안으로만 가는
+   * 곳에서 쓴다. 그래야 방금 친 글자가 아직 남아 있는 채로 저장 버튼을 눌러도 함께 나간다.
+   */
   debounceMs?: number;
 }
 
 export function TextField({
   value,
   onCommit,
+  onSubmit,
   placeholder,
   className,
   title,
@@ -54,6 +64,11 @@ export function TextField({
 
   const schedule = (next: string) => {
     if (timer.current) clearTimeout(timer.current);
+    if (debounceMs <= 0) {
+      pending.current = false;
+      onCommit(next);
+      return;
+    }
     timer.current = setTimeout(() => {
       timer.current = null;
       pending.current = false;
@@ -84,6 +99,14 @@ export function TextField({
         pending.current = true;
         // 조합 중에는 중간 글자(ㅎ, 하, 한…)를 밖으로 내보내지 않는다.
         if (!composing.current) schedule(next);
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' || composing.current || !onSubmit) return;
+        e.preventDefault();
+        const next = e.currentTarget.value;
+        setLocal(next);
+        flushNow(next);
+        onSubmit(next);
       }}
       onCompositionStart={() => {
         composing.current = true;

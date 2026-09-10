@@ -58,12 +58,15 @@ import {
   EMPTY_PANE,
   NEW_SESSION,
   NEW_TERM_PANE,
+  SPLIT_PANE,
+  TERM_CWD,
   TERM_PANE,
   TEXT_PANE,
   backend,
   makeDirtySnapshot,
   requestWindowClose,
   resetBackend,
+  withSplitTerminal,
 } from './test/backend';
 
 /** 스토어를 초기 상태로 되돌린다 (모듈 단위 싱글턴이라 테스트마다 필요). */
@@ -82,7 +85,10 @@ function resetStore() {
     ctx: null,
     palette: false,
     picker: null,
+    newFile: null,
+    newSession: false,
     settings: false,
+    pendingCwd: null,
     toast: null,
     fileDrop: false,
     confirm: null,
@@ -186,6 +192,9 @@ describe('창 제목', () => {
 });
 
 describe('새 세션', () => {
+  /** 이름 묻는 창이 떠 있는가. */
+  const nameInput = () => screen.getByLabelText('세션 이름') as HTMLInputElement;
+
   /** 새 세션이 만들어졌고 그 터미널이 세션을 가득 채우고 있는가. */
   const expectFullTerminalSession = async () => {
     await waitFor(() => expect(useStore.getState().snapshot?.activeId).toBe(NEW_SESSION));
@@ -196,19 +205,99 @@ describe('새 세션', () => {
     // 빈 블럭 안내가 아니라 진짜 터미널이 서 있어야 한다.
     expect(screen.queryByText('▮ 터미널 열기')).toBeNull();
     expect(paneEl(NEW_TERM_PANE).querySelector('.term-body')).toBeTruthy();
+    // 이름을 받고 나면 창은 사라진다.
+    expect(screen.queryByText('새 세션', { selector: '.picker__title' })).toBeNull();
   };
 
-  it('사이드바의 ＋ 는 터미널 전체화면 상태로 세션을 연다', async () => {
+  it('＋ 는 세션을 곧바로 만들지 않고 이름부터 묻는다', async () => {
     render(<App />);
     await waitForBoot();
 
     fireEvent.click(screen.getByLabelText('새 세션'));
 
+    expect(screen.getByText('새 세션', { selector: '.picker__title' })).toBeInTheDocument();
+    // 다음 기본 이름이 채워진 채로 뜬다 — 그대로 엔터를 쳐도 된다.
+    expect(nameInput().value).toBe('새 세션 2');
+    expect(backend.calls).not.toContain('session_create');
+  });
+
+  it('이름을 치고 엔터하면 그 이름으로 만들어진다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(screen.getByLabelText('새 세션'));
+    fireEvent.change(nameInput(), { target: { value: '배포 · stg' } });
+    fireEvent.keyDown(nameInput(), { key: 'Enter' });
+
     await expectFullTerminalSession();
+    expect(backend.lastArgs('session_create')).toEqual({ name: '배포 · stg' });
     // 방금 띄운 터미널을 설정 모달이 곧바로 덮어 버리면 안 된다.
     expect(useStore.getState().settings).toBe(false);
     // 고른 창은 그 터미널이어야 Ctrl+Shift+F · Ctrl+휠 이 곧바로 듣는다.
     expect(useStore.getState().sel).toBe(NEW_TERM_PANE);
+  });
+
+  it('생성 버튼도 엔터와 같은 일을 한다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(screen.getByLabelText('새 세션'));
+    fireEvent.change(nameInput(), { target: { value: '  로그 보기  ' } });
+    fireEvent.click(screen.getByText('생성'));
+
+    await expectFullTerminalSession();
+    expect(backend.lastArgs('session_create')).toEqual({ name: '로그 보기' });
+  });
+
+  it('한글 조합 중의 엔터는 만들기가 아니라 글자 확정이다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(screen.getByLabelText('새 세션'));
+    fireEvent.compositionStart(nameInput());
+    fireEvent.change(nameInput(), { target: { value: '한' } });
+    fireEvent.keyDown(nameInput(), { key: 'Enter' });
+
+    expect(backend.calls).not.toContain('session_create');
+    fireEvent.compositionEnd(nameInput());
+    fireEvent.keyDown(nameInput(), { key: 'Enter' });
+    await expectFullTerminalSession();
+  });
+
+  it('닫기는 취소 — 세션이 만들어지지 않는다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(screen.getByLabelText('새 세션'));
+    fireEvent.click(screen.getByText('닫기'));
+
+    expect(useStore.getState().newSession).toBe(false);
+    expect(backend.calls).not.toContain('session_create');
+    expect(useStore.getState().snapshot?.activeId).not.toBe(NEW_SESSION);
+  });
+
+  it('이름이 비어 있으면 만들 수 없다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(screen.getByLabelText('새 세션'));
+    fireEvent.change(nameInput(), { target: { value: '   ' } });
+    fireEvent.keyDown(nameInput(), { key: 'Enter' });
+
+    expect(backend.calls).not.toContain('session_create');
+    expect((screen.getByText('생성') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('세션 이름을 입력하세요')).toBeInTheDocument();
+  });
+
+  it('Esc 는 이름 묻는 창도 닫는다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(screen.getByLabelText('새 세션'));
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(useStore.getState().newSession).toBe(false);
+    expect(backend.calls).not.toContain('session_create');
   });
 
   it('사이드바가 접혀 있어도 ＋ 로 세션을 더 만들 수 있다', async () => {
@@ -222,11 +311,12 @@ describe('새 세션', () => {
 
     const plus = within(document.querySelector('.rail') as HTMLElement).getByLabelText('새 세션');
     fireEvent.click(plus);
+    fireEvent.keyDown(nameInput(), { key: 'Enter' });
 
     await expectFullTerminalSession();
   });
 
-  it('Ctrl+Shift+T 는 터미널 안에서도 새 세션을 연다', async () => {
+  it('Ctrl+Shift+T 는 터미널 안에서도 이름 묻는 창을 연다', async () => {
     render(<App />);
     await waitForBoot();
 
@@ -239,7 +329,68 @@ describe('새 세션', () => {
 
     fireEvent.keyDown(window, { key: 'T', ctrlKey: true, shiftKey: true });
 
+    fireEvent.keyDown(nameInput(), { key: 'Enter' });
     await expectFullTerminalSession();
+  });
+});
+
+describe('나눈 자리에서 여는 터미널', () => {
+  /** 터미널 창을 우클릭해 위·아래로 나눈다. */
+  async function splitTheTerminal() {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.contextMenu(paneEl(TERM_PANE));
+    fireEvent.click(screen.getByText('위·아래로 분할'));
+
+    await waitFor(() => expect(paneEl(SPLIT_PANE)).toBeTruthy());
+  }
+
+  /** 갓 생긴 빈 블럭의 "터미널 열기". */
+  const openTerminalThere = () =>
+    fireEvent.click(within(paneEl(SPLIT_PANE)).getByText('▮ 터미널 열기'));
+
+  const sentInherit = () => backend.lastArgs('pane_open_terminal')?.inherit;
+
+  it('곧바로 열면 나눠 준 터미널과 같은 폴더에서 시작한다', async () => {
+    await splitTheTerminal();
+
+    // 무엇이 일어날지 빈 블럭이 먼저 알려 준다.
+    expect(within(paneEl(SPLIT_PANE)).getByText(`터미널은 직전 터미널 폴더에서 시작합니다 · ${TERM_CWD}`))
+      .toBeInTheDocument();
+
+    openTerminalThere();
+
+    await waitFor(() => expect(sentInherit()).toEqual({ sourcePaneId: TERM_PANE, cwd: TERM_CWD }));
+    expect(await screen.findByText(`직전 터미널 폴더에서 시작 · ${TERM_CWD}`)).toBeInTheDocument();
+  });
+
+  it('그 사이 파일을 열었으면 세션에 적힌 폴더에서 시작한다', async () => {
+    await splitTheTerminal();
+
+    // 다른 블럭에 파일을 여는 것도 "다른 이벤트" 다 — 스냅샷이 갈리면 기억은 끝난다.
+    await act(async () => {
+      await useStore.getState().openFile(EMPTY_PANE, 'C:/work/rterm/README.md');
+    });
+    openTerminalThere();
+
+    await waitFor(() => expect(backend.calls.filter((c) => c === 'pane_open_terminal')).toHaveLength(1));
+    expect(sentInherit()).toBeNull();
+  });
+
+  it('나눠 준 터미널이 그새 폴더를 옮겼으면 물려받지 않는다', async () => {
+    await splitTheTerminal();
+
+    // 셸이 알려 준 새 폴더가 스냅샷에 실려 온다 (`cd` 뒤의 갱신).
+    const moved = withSplitTerminal();
+    moved.sessions[0].panes[0].cwd = 'C:/work/rterm/docs';
+    backend.snapshot = moved;
+    act(() => useStore.setState({ snapshot: moved }));
+
+    openTerminalThere();
+
+    await waitFor(() => expect(backend.calls).toContain('pane_open_terminal'));
+    expect(sentInherit()).toBeNull();
   });
 });
 

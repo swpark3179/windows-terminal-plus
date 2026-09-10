@@ -413,8 +413,21 @@ pub fn set_full(s: &mut Session, pane_id: Option<&str>) -> Result<(), LayoutErro
 /// 실제 셸 스폰은 프론트엔드가 xterm 을 띄운 뒤 `pty_open` 으로 이어서 한다 —
 /// ConPTY 가 시작 직후 커서 위치를 물어 오므로 답해 줄 xterm 이 먼저 있어야 한다.
 /// 여기서 하는 일은 "이 자리는 터미널" 이라고 스냅샷에 적는 것뿐이다.
-pub fn open_terminal(s: &mut Session, pane_id: &str) -> Result<(), LayoutError> {
+///
+/// `cwd` 는 **물려받은 폴더** 다. 터미널을 우클릭해 나눈 자리에서 곧바로 터미널을 열면
+/// 나눠 준 터미널이 서 있던 폴더가 들어온다(`pty_open` 의 `resolve_cwd` 가 이 값을 쓴다).
+/// 물려받을 것이 없으면 `None` — 그때는 세션 설정의 폴더에서 뜬다. 물려받을지 말지의
+/// 판정은 호출부(`commands::layout`)가 한다. 여기서는 받은 값을 적기만 한다.
+pub fn open_terminal(
+    s: &mut Session,
+    pane_id: &str,
+    cwd: Option<&str>,
+) -> Result<(), LayoutError> {
     let title = format!("{} · 새 터미널", s.shell.label());
+    let inherited = cwd
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string);
     let pane = s.pane_mut(pane_id).ok_or(LayoutError::PaneNotFound)?;
     if pane.kind != PaneKind::Empty {
         return Err(LayoutError::NotEmpty);
@@ -426,8 +439,8 @@ pub fn open_terminal(s: &mut Session, pane_id: &str) -> Result<(), LayoutError> 
     pane.mode = None;
     pane.scrollback = None;
     pane.alive = false;
-    // 새로 여는 창이 남의 폴더에서 뜨거나 AI 를 자동 실행하면 안 된다.
-    pane.cwd = None;
+    // 물려받은 폴더가 없으면 남의 폴더에서 뜨지 않는다. AI 자동 실행도 마찬가지.
+    pane.cwd = inherited;
     pane.ai = None;
     // 터미널은 빈 블럭에만 열리므로 전체화면인 창일 수 없다 — 가려지지 않게 창 모드로.
     s.full_pane_id = None;
@@ -446,7 +459,7 @@ pub fn start_full_terminal(s: &mut Session) {
     if s.occupied_count() > 0 {
         return;
     }
-    if open_terminal(s, &target).is_ok() {
+    if open_terminal(s, &target, None).is_ok() {
         // 방금 터미널로 바꾼 창이므로 빈 블럭일 수 없다 — 실패할 이유가 없다.
         let _ = set_full(s, Some(&target));
     }

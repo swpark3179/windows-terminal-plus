@@ -163,6 +163,16 @@ export interface SaveResult {
   snapshot: Snapshot;
 }
 
+/**
+ * 나눠 준 터미널의 폴더를 물려받겠다는 요청 (`pane_open_terminal`).
+ *
+ * 나눌 때 본 폴더를 함께 보내므로, 그 사이 그 터미널이 자리를 옮겼으면 Rust 가 요청을 버린다.
+ */
+export interface InheritCwd {
+  sourcePaneId: string;
+  cwd: string;
+}
+
 export interface SessionPatch {
   name?: string;
   cwd?: string;

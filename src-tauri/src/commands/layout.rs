@@ -4,7 +4,7 @@
 //! `layout_merge_check` 를 불러 같은 규칙을 그대로 본다 — 규칙이 두 벌 존재하지 않는다.
 
 use rterm_core::{layout, MergeVerdict, Snapshot, SplitDir, TrackAxis};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use super::{mutate, read_snapshot};
@@ -147,17 +147,42 @@ pub fn pane_close(
     })
 }
 
+/// 나눠 준 터미널의 폴더를 물려받겠다는 요청. 프론트엔드가 분할 직후에만 보낸다.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InheritCwd {
+    /// 나눠 준 터미널의 창 id.
+    pub source_pane_id: String,
+    /// 나눌 때 그 터미널이 서 있던 폴더.
+    pub cwd: String,
+}
+
 /// 빈 블럭을 터미널 자리로 바꾼다. 실제 셸 스폰은 프론트엔드가 xterm 을
 /// 띄운 뒤 `pty_spawn` 으로 이어서 한다 — ConPTY 가 곧바로 커서 위치를 묻기 때문에
 /// 답해 줄 xterm 이 먼저 준비돼 있어야 한다.
+///
+/// `inherit` 이 오면 **나눠 준 터미널이 아직 그 폴더에 서 있을 때만** 물려받는다.
+/// 판정에 스냅샷이 아니라 셸이 지금 알려 주고 있는 값(`live_cwd`)을 쓰는 이유는,
+/// 스냅샷의 창별 폴더가 명령이 오갈 때만 갱신돼 그 사이의 `cd` 를 놓치기 때문이다.
+/// 그 터미널이 자리를 옮겼거나 끝났으면 세션 설정의 폴더에서 뜬다.
 #[tauri::command]
 pub fn pane_open_terminal(
     state: State<'_, AppState>,
     session_id: String,
     pane_id: String,
+    inherit: Option<InheritCwd>,
 ) -> Result<Snapshot, String> {
+    let cwd = inherit
+        .and_then(|want| {
+            state
+                .live_cwd(&want.source_pane_id)
+                .filter(|now| now == &want.cwd)
+        })
+        // 여기서 띄울 수 없는 폴더는 아예 적지 않는다 — 사라진 폴더도, `pty_open` 이 쓸 수
+        // 없는 WSL 쪽 경로(`/home/...`)도 여기서 걸러 세션 폴더로 조용히 돌아간다.
+        .filter(|dir| std::path::Path::new(dir).is_dir());
     mutate(&state, &session_id, |s| {
-        layout::open_terminal(s, &pane_id).map_err(|e| e.to_string())
+        layout::open_terminal(s, &pane_id, cwd.as_deref()).map_err(|e| e.to_string())
     })
 }
 

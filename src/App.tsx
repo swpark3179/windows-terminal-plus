@@ -8,6 +8,7 @@ import { ContextMenu } from './components/ContextMenu';
 import { EditToolbar } from './components/EditToolbar';
 import { FilePicker } from './components/FilePicker';
 import { NewFileDialog } from './components/NewFileDialog';
+import { NewSessionDialog } from './components/NewSessionDialog';
 import { PaneGrid } from './components/PaneGrid';
 import { SessionHeader } from './components/SessionHeader';
 import { SettingsModal } from './components/SettingsModal';
@@ -53,9 +54,10 @@ export function App() {
 
       // 새 세션 — 윈도우 터미널의 "새 탭"(Ctrl+Shift+T)과 같은 자리.
       // 사이드바가 접혀 있든 터미널이 포커스를 쥐고 있든 늘 열려 있어야 하는 길이다.
+      // 이름을 묻는 창이 먼저 뜨고, 이름을 받아야 세션이 만들어진다.
       if (e.ctrlKey && e.shiftKey && k === 't') {
         e.preventDefault();
-        void store.newSession();
+        store.openNewSession();
         return;
       }
 
@@ -243,6 +245,7 @@ export function App() {
       <CommandPalette />
       <FilePicker />
       <NewFileDialog />
+      <NewSessionDialog />
       <SettingsModal />
       <ConfirmDialog />
       <Toast />

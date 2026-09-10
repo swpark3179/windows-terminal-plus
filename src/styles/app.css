@@ -2451,7 +2451,8 @@ mark.md-hit--on {
   color: var(--accent);
 }
 
-.newfile__name {
+.newfile__name,
+.newsession__name {
   height: 32px;
   padding: 0 11px;
   border-radius: 7px;
@@ -2462,13 +2463,15 @@ mark.md-hit--on {
   font-family: inherit;
 }
 
-.newfile__name:focus {
+.newfile__name:focus,
+.newsession__name:focus {
   outline: none;
   border-color: var(--accent);
   background: var(--panel);
 }
 
-.newfile__note {
+.newfile__note,
+.newsession__note {
   font-size: 10.5px;
   color: var(--muted-2);
   min-height: 14px;
@@ -2477,6 +2480,24 @@ mark.md-hit--on {
 
 .newfile__note--bad {
   color: var(--accent-deep);
+}
+
+/* ── 새 세션 (이름 묻기) ────────────────────────────── */
+
+.newsession {
+  width: min(440px, 92vw);
+}
+
+.newsession__body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 14px 16px;
+}
+
+.newsession__label {
+  font-size: 10.5px;
+  color: var(--muted-2);
 }
 
 .picker__foot {
@@ -2742,6 +2763,12 @@ mark.md-hit--on {
   font-size: 11.5px;
   font-weight: 700;
   cursor: pointer;
+}
+
+/* 이름이 비어 있는 만들기 버튼처럼, 누를 수 없을 때는 그렇게 보여야 한다. */
+.primary-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .close-x {
