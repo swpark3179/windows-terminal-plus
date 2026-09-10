@@ -25,6 +25,7 @@ export function ContextMenu() {
   const startSwap = useStore((s) => s.startSwap);
   const openTerminal = useStore((s) => s.openTerminal);
   const openPicker = useStore((s) => s.openPicker);
+  const openNewFile = useStore((s) => s.openNewFile);
   const requestClosePane = useStore((s) => s.requestClosePane);
   const zoomReset = useStore((s) => s.zoomReset);
   const toggleFull = useStore((s) => s.toggleFull);
@@ -113,6 +114,7 @@ export function ContextMenu() {
       items.push(
         { key: 'term', icon: '▮', label: '터미널 열기', run: () => void openTerminal(ctx.id) },
         { key: 'file', icon: '◫', label: '파일 열기…', run: () => openPicker(ctx.id) },
+        { key: 'new', icon: '✚', label: '새 파일 만들기…', run: () => openNewFile(ctx.id) },
       );
     } else {
       if (pane.path) {

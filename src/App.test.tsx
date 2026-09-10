@@ -138,13 +138,34 @@ describe('앱 껍데기', () => {
     expect(screen.getByText(/창 1 · 빈 블럭 1 · grid 2×1/)).toBeInTheDocument();
   });
 
-  it('빈 블럭은 터미널·파일 열기 버튼을 보여 준다', async () => {
+  it('빈 블럭은 터미널·파일 열기·새 파일 버튼을 보여 준다', async () => {
     render(<App />);
     await waitForBoot();
 
     expect(screen.getByText('▮ 터미널 열기')).toBeInTheDocument();
     expect(screen.getByText('◫ 파일 열기')).toBeInTheDocument();
+    expect(screen.getByText('✚ 새 파일')).toBeInTheDocument();
     expect(screen.getByText('파일을 이 블럭으로 드래그해도 열립니다')).toBeInTheDocument();
+  });
+
+  it('빈 블럭의 새 파일 버튼이 만들기 창을 그 블럭에 대고 연다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(screen.getByText('✚ 새 파일'));
+
+    expect(screen.getByText('새 파일 만들기')).toBeInTheDocument();
+    expect(useStore.getState().newFile).toEqual({ paneId: EMPTY_PANE });
+  });
+
+  it('Esc 는 만들기 창도 닫는다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.click(screen.getByText('✚ 새 파일'));
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(useStore.getState().newFile).toBeNull();
   });
 });
 

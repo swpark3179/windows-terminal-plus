@@ -7,9 +7,12 @@
 
 import { create } from 'zustand';
 import * as api from '../ipc/bridge';
+import { loadPrefs, savePrefs } from '../lib/mdView';
 import type {
   MdMode,
+  MdPrefs,
   MergeVerdict,
+  NewFileKind,
   Pane,
   Session,
   Snapshot,
@@ -59,6 +62,8 @@ interface AppState {
   paletteQuery: string;
   paletteSel: number;
   picker: { paneId: string } | null;
+  /** 새 파일을 만들 빈 블럭. */
+  newFile: { paneId: string } | null;
   settings: boolean;
   toast: string | null;
   /** OS 에서 파일을 끌어오는 중. */
@@ -75,6 +80,8 @@ interface AppState {
    * 셸은 계속 살아 있지만 다시 붙을 때 재생되는 스크롤백에는 OSC 가 들어 있지 않다.
    */
   liveTitles: Record<string, string>;
+  /** 마크다운 뷰어 표시 설정 — 창이 아니라 앱 전체의 것. */
+  mdPrefs: MdPrefs;
 
   // ── 액션 ────────────────────────────────────
   boot: () => Promise<void>;
@@ -105,6 +112,10 @@ interface AppState {
   saveAllDirty: () => Promise<void>;
   openTerminal: (paneId: string) => Promise<void>;
   openFile: (paneId: string, path: string) => Promise<void>;
+  /** 세션 폴더 아래에 새 파일을 만들어 그 빈 블럭에 연다. 성공하면 `true`. */
+  createFile: (paneId: string, name: string, kind: NewFileKind) => Promise<boolean>;
+  /** 빈 블럭이 없으면 알려 주고, 있으면 그 창에 파일을 연다 (드롭·팔레트가 함께 쓴다). */
+  openFileInFreePane: (path: string) => void;
   /**
    * 창 하나만 세션 영역 가득 보이게 / 다시 격자로.
    * 창을 지정하지 않으면 지금 전체화면인 창, 없으면 고른 창(또는 유일한 창)을 대상으로 한다.
@@ -132,6 +143,9 @@ interface AppState {
   setPaletteSel: (i: number) => void;
   openPicker: (paneId: string) => void;
   closePicker: () => void;
+  openNewFile: (paneId: string) => void;
+  closeNewFile: () => void;
+  setMdPrefs: (patch: Partial<MdPrefs>) => void;
   openSettings: () => void;
   closeSettings: () => void;
   setFileDrop: (on: boolean) => void;
@@ -174,12 +188,14 @@ export const useStore = create<AppState>((set, get) => ({
   paletteQuery: '',
   paletteSel: 0,
   picker: null,
+  newFile: null,
   settings: false,
   toast: null,
   fileDrop: false,
   confirm: null,
   resizeDraft: null,
   liveTitles: {},
+  mdPrefs: loadPrefs(),
 
   boot: async () => {
     const boot = await api.bootApp();
@@ -444,6 +460,31 @@ export const useStore = create<AppState>((set, get) => ({
     }, flash);
   },
 
+  createFile: async (paneId, name, kind) => {
+    const { snapshot, flash, apply } = get();
+    if (!snapshot) return false;
+    try {
+      apply(await api.createFilePane(snapshot.activeId, paneId, name, kind));
+      set({ sel: paneId, newFile: null });
+      flash(`새 파일 · ${name.trim()}`);
+      return true;
+    } catch (e) {
+      // 이름이 겹치거나 쓸 수 없는 이름이면 창을 닫지 않는다 — 고쳐서 다시 누를 수 있게.
+      flash(typeof e === 'string' ? e : '파일을 만들 수 없습니다');
+      return false;
+    }
+  },
+
+  openFileInFreePane: (path) => {
+    const { snapshot, flash } = get();
+    const free = activePanes(snapshot).find((p) => p.kind === 'empty');
+    if (!free) {
+      flash('빈 블럭이 없습니다 — Ctrl+E 로 창을 분할한 뒤 다시 열어 주세요');
+      return;
+    }
+    void get().openFile(free.id, path);
+  },
+
   toggleFull: async (paneId) => {
     const { snapshot, flash, apply } = get();
     const session = activeSession(snapshot);
@@ -591,6 +632,15 @@ export const useStore = create<AppState>((set, get) => ({
   setPaletteSel: (paletteSel) => set({ paletteSel }),
   openPicker: (paneId) => set({ picker: { paneId }, ctx: null }),
   closePicker: () => set({ picker: null }),
+  openNewFile: (paneId) => set({ newFile: { paneId }, ctx: null, picker: null }),
+  closeNewFile: () => set({ newFile: null }),
+
+  setMdPrefs: (patch) =>
+    set((s) => {
+      const mdPrefs = { ...s.mdPrefs, ...patch };
+      savePrefs(mdPrefs);
+      return { mdPrefs };
+    }),
   openSettings: () => set({ settings: true, ctx: null }),
   closeSettings: () => set({ settings: false }),
   setFileDrop: (fileDrop) => set({ fileDrop }),
@@ -621,6 +671,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       ctx: null,
       picker: null,
+      newFile: null,
       settings: false,
       palette: false,
       confirm: null,

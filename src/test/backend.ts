@@ -13,6 +13,7 @@ export const EMPTY_PANE = 'p-empty';
 export const TEXT_PANE = 'p-text';
 export const NEW_SESSION = 'ses_new';
 export const NEW_TERM_PANE = 'p-new-term';
+export const NEW_FILE_PANE = 'p-new-file';
 
 function pane(id: string, over: Partial<Pane>): Pane {
   return {
@@ -94,6 +95,21 @@ export function makeDirtySnapshot(): Snapshot {
   return snap;
 }
 
+/** 두 번째 칸이 방금 만든 마크다운 파일인 스냅샷. */
+export function withCreatedFile(args?: { name?: string }): Snapshot {
+  const snap = makeSnapshot();
+  const name = `${(args?.name ?? '메모').trim()}.md`;
+  snap.sessions[0].panes[1] = pane(NEW_FILE_PANE, {
+    kind: 'md',
+    title: name,
+    c: 2,
+    path: `C:/work/rterm/${name}`,
+    content: `# ${args?.name ?? '메모'}\n\n`,
+    mode: 'edit',
+  });
+  return snap;
+}
+
 /** 창을 닫으려 할 때 프론트엔드가 등록해 둔 처리기. */
 export type CloseHandler = (event: { preventDefault: () => void }) => void;
 
@@ -111,6 +127,8 @@ export interface Backend {
   verdict: MergeVerdict;
   /** `layout_merge` 가 거부할 때의 사유 문구. `null` 이면 성공. */
   mergeError: string | null;
+  /** `pane_create_file` 이 거부할 때의 사유 문구. `null` 이면 성공. */
+  createFileError: string | null;
   snapshot: Snapshot;
 }
 
@@ -124,6 +142,7 @@ export const backend: Backend = {
   closeHandler: null,
   verdict: { status: 'rejected', reason: 'tooManyPrograms', message: '프로그램이 열린 창은 하나만 병합할 수 있습니다' },
   mergeError: '프로그램이 열린 창은 하나만 병합할 수 있습니다',
+  createFileError: null,
   snapshot: makeSnapshot(),
 };
 
@@ -140,6 +159,7 @@ export function resetBackend() {
     message: '프로그램이 열린 창은 하나만 병합할 수 있습니다',
   };
   backend.mergeError = '프로그램이 열린 창은 하나만 병합할 수 있습니다';
+  backend.createFileError = null;
 }
 
 export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> {
@@ -181,6 +201,12 @@ export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> 
       // Rust 가 새 세션을 "터미널 하나 · 세션 전체화면" 으로 세워 돌려준다.
       backend.snapshot = withNewSession();
       return backend.snapshot;
+    case 'pane_create_file': {
+      // Rust 는 만들기와 열기를 한 번에 한다 — 빈 블럭이 그 파일 창으로 바뀐 스냅샷이 돌아온다.
+      if (backend.createFileError) throw backend.createFileError;
+      backend.snapshot = withCreatedFile(args as { name?: string } | undefined);
+      return backend.snapshot;
+    }
     case 'pty_open':
       return { restored: '', banner: '', attached: false };
     case 'pty_write':

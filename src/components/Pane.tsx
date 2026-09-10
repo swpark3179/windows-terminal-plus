@@ -5,10 +5,11 @@ import { MarkdownPane } from './MarkdownPane';
 import { TerminalPane } from './TerminalPane';
 import { TextPane } from './TextPane';
 
-/** 빈 블럭 — 터미널이나 파일을 여는 자리. */
+/** 빈 블럭 — 터미널을 띄우거나, 있는 파일을 열거나, 새 파일을 만드는 자리. */
 function EmptyBody({ pane }: { pane: Pane }) {
   const openTerminal = useStore((s) => s.openTerminal);
   const openPicker = useStore((s) => s.openPicker);
+  const openNewFile = useStore((s) => s.openNewFile);
 
   return (
     <div className="empty-body">
@@ -33,6 +34,15 @@ function EmptyBody({ pane }: { pane: Pane }) {
           }}
         >
           ◫ 파일 열기
+        </button>
+        <button
+          className="empty-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            openNewFile(pane.id);
+          }}
+        >
+          ✚ 새 파일
         </button>
       </div>
       <div className="empty-body__hint">파일을 이 블럭으로 드래그해도 열립니다</div>

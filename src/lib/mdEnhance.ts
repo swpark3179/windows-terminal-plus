@@ -6,6 +6,7 @@
  */
 
 import { writeClipboardText } from '../ipc/bridge';
+import type { MdTheme } from '../state/types';
 
 /** 자주 쓰는 언어만 등록해 번들을 줄인다. */
 const LANGUAGES: Record<string, () => Promise<{ default: unknown }>> = {
@@ -110,48 +111,77 @@ export async function highlightCode(root: HTMLElement): Promise<void> {
 }
 
 let mermaidPromise: Promise<typeof import('mermaid').default> | null = null;
+let mermaidTheme: MdTheme | null = null;
 let diagramSeq = 0;
 
-async function getMermaid() {
+/**
+ * 다이어그램 색 — 앱의 종이색 팔레트, 그리고 뷰어의 어두운 테마에 맞춘 짝.
+ * 참고 저장소(`markdown-viewer`)의 `mermaidTheme` 과 같은 갈래다.
+ */
+const THEME_VARS: Record<MdTheme, Record<string, string>> = {
+  light: {
+    background: '#fffefb',
+    primaryColor: '#fbf1ec',
+    primaryTextColor: '#1f1e1d',
+    primaryBorderColor: '#c96442',
+    secondaryColor: '#f6f4ee',
+    tertiaryColor: '#f2f0e9',
+    lineColor: '#a04f2e',
+    textColor: '#33312b',
+    mainBkg: '#fbf1ec',
+    nodeBorder: '#c96442',
+    clusterBkg: '#f6f4ee',
+    clusterBorder: '#dcd8cc',
+    titleColor: '#1f1e1d',
+    edgeLabelBackground: '#f2f0e9',
+  },
+  dark: {
+    background: '#26241f',
+    primaryColor: '#33312b',
+    primaryTextColor: '#f0eee6',
+    primaryBorderColor: '#d99b74',
+    secondaryColor: '#3a372f',
+    tertiaryColor: '#2b2924',
+    lineColor: '#c98a63',
+    textColor: '#ded9cd',
+    mainBkg: '#33312b',
+    nodeBorder: '#d99b74',
+    clusterBkg: '#2b2924',
+    clusterBorder: '#4a463d',
+    titleColor: '#f0eee6',
+    edgeLabelBackground: '#2e2c27',
+  },
+};
+
+async function getMermaid(theme: MdTheme) {
   if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then((m) => {
-      m.default.initialize({
-        startOnLoad: false,
-        securityLevel: 'strict',
-        theme: 'base',
-        fontFamily: "'Roboto', 'Noto Sans KR', system-ui, sans-serif",
-        // 앱의 종이색 팔레트에 맞춘 테마.
-        themeVariables: {
-          background: '#fffefb',
-          primaryColor: '#fbf1ec',
-          primaryTextColor: '#1f1e1d',
-          primaryBorderColor: '#c96442',
-          secondaryColor: '#f6f4ee',
-          tertiaryColor: '#f2f0e9',
-          lineColor: '#a04f2e',
-          textColor: '#33312b',
-          mainBkg: '#fbf1ec',
-          nodeBorder: '#c96442',
-          clusterBkg: '#f6f4ee',
-          clusterBorder: '#dcd8cc',
-          titleColor: '#1f1e1d',
-        },
-      });
-      return m.default;
-    });
+    mermaidPromise = import('mermaid').then((m) => m.default);
   }
-  return mermaidPromise;
+  const mermaid = await mermaidPromise;
+  // 테마가 바뀌면 다시 초기화한다 — mermaid 는 그릴 때가 아니라 초기화 때 색을 정한다.
+  if (mermaidTheme !== theme) {
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'base',
+      darkMode: theme === 'dark',
+      fontFamily: "'Roboto', 'Noto Sans KR', system-ui, sans-serif",
+      themeVariables: THEME_VARS[theme],
+    });
+    mermaidTheme = theme;
+  }
+  return mermaid;
 }
 
 /** ```mermaid 블록을 실제 다이어그램으로 바꾼다. */
-export async function renderMermaid(root: HTMLElement): Promise<void> {
+export async function renderMermaid(root: HTMLElement, theme: MdTheme = 'light'): Promise<void> {
   const blocks = Array.from(root.querySelectorAll<HTMLElement>('.md-mermaid[data-mermaid]'));
   const pending = blocks.filter((b) => b.dataset.rendered !== 'yes');
   if (pending.length === 0) return;
 
   let mermaid: Awaited<ReturnType<typeof getMermaid>>;
   try {
-    mermaid = await getMermaid();
+    mermaid = await getMermaid(theme);
   } catch {
     for (const block of pending) failDiagram(block, 'mermaid 를 불러오지 못했습니다');
     return;

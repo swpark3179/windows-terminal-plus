@@ -7,6 +7,22 @@ export type PaneKind = 'empty' | 'term' | 'md' | 'text' | 'image';
 export type Shell = 'pwsh' | 'cmd' | 'wsl' | 'ssh';
 export type MdMode = 'view' | 'edit';
 
+/** 빈 블럭에서 새로 만들 수 있는 파일 종류. */
+export type NewFileKind = 'md' | 'txt';
+
+/** 마크다운 뷰어 표시 설정 — 창이 아니라 앱 전체에 걸린다. */
+export type MdTheme = 'light' | 'dark';
+export type MdFont = 'sans' | 'serif' | 'mono';
+
+export interface MdPrefs {
+  theme: MdTheme;
+  font: MdFont;
+  /** 목차 패널을 펼쳐 두는가. */
+  toc: boolean;
+  /** 본문 너비를 읽기 좋은 폭으로 좁히는가. */
+  narrow: boolean;
+}
+
 /** 터미널 창에서 돌고 있는 AI CLI. */
 export type AiKind = 'claude' | 'codex';
 
