@@ -7,6 +7,7 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { ContextMenu } from './components/ContextMenu';
 import { EditToolbar } from './components/EditToolbar';
 import { FilePicker } from './components/FilePicker';
+import { NewFileDialog } from './components/NewFileDialog';
 import { PaneGrid } from './components/PaneGrid';
 import { SessionHeader } from './components/SessionHeader';
 import { SettingsModal } from './components/SettingsModal';
@@ -241,6 +242,7 @@ export function App() {
       <ContextMenu />
       <CommandPalette />
       <FilePicker />
+      <NewFileDialog />
       <SettingsModal />
       <ConfirmDialog />
       <Toast />

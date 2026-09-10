@@ -32,6 +32,18 @@ const MAX_READ_BYTES: u64 = 8 * 1024 * 1024;
 /// 이미지는 base64 로 웹뷰에 실어 보내므로 조금 더 넉넉히, 대신 상한을 둔다 (32 MiB).
 const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 
+/// 새로 만들 수 있는 파일 종류. 디자인의 "빈 블럭" 은 여는 자리였고, 여기에 만드는 자리를 더한다.
+const NEW_FILE_KINDS: &[(&str, &str)] = &[("md", "md"), ("txt", "txt")];
+
+/// 윈도우가 파일 이름에 쓰지 못하게 막는 글자.
+const BAD_NAME_CHARS: &[char] = &['<', '>', ':', '"', '|', '?', '*'];
+
+/// 윈도우 예약 장치 이름 — 이 이름으로는 파일을 만들 수 없다.
+const RESERVED_STEMS: &[&str] = &[
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
 /// 이미지 뷰어로 여는 확장자와 MIME.
 const IMAGE_TYPES: &[(&str, &str)] = &[
     ("png", "image/png"),
@@ -343,6 +355,148 @@ pub fn pane_set_image_zoom(
     Ok(())
 }
 
+/// 새 파일 이름을 세션 폴더 기준의 실제 경로로 바꾼다.
+///
+/// 이름은 **세션 폴더 아래**로만 간다 — 절대 경로도, `..` 도 받지 않는다. 빈 블럭에서
+/// 파일을 만드는 자리는 언제나 그 세션의 작업 폴더이므로, 거기서 벗어나는 길은 실수일 뿐이다.
+/// 확장자를 적지 않았으면 고른 종류(`md` · `txt`)를 붙인다.
+fn resolve_new_path(cwd: &Path, name: &str, kind: &str) -> Result<PathBuf, String> {
+    let ext = NEW_FILE_KINDS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, e)| *e)
+        .ok_or_else(|| "만들 수 없는 파일 종류입니다".to_string())?;
+
+    let raw = name.trim();
+    if raw.is_empty() {
+        return Err("파일 이름을 적어 주세요".into());
+    }
+    if raw.contains(BAD_NAME_CHARS) || raw.chars().any(|c| c.is_control()) {
+        return Err(r#"이름에 < > : " | ? * 는 쓸 수 없습니다"#.into());
+    }
+    // 절대 경로(`C:\...` · `/...` · `\\서버\...`)는 여기서 걸러진다 — `:` 는 위에서 이미 막혔다.
+    if raw.starts_with('/') || raw.starts_with('\\') {
+        return Err("세션 폴더 아래의 이름만 쓸 수 있습니다".into());
+    }
+
+    let mut path = cwd.to_path_buf();
+    let parts: Vec<&str> = raw.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
+    if parts.is_empty() {
+        return Err("파일 이름을 적어 주세요".into());
+    }
+    for part in &parts {
+        if *part == ".." || *part == "." {
+            return Err("세션 폴더 밖으로는 만들 수 없습니다".into());
+        }
+        // 윈도우는 이름 끝의 점·공백을 조용히 지운다 — 뜻하지 않은 파일이 생기지 않게 막는다.
+        if part.ends_with('.') || part.ends_with(' ') {
+            return Err("이름 끝에 점이나 공백을 둘 수 없습니다".into());
+        }
+        path.push(part);
+    }
+
+    let last = parts[parts.len() - 1];
+    // 확장자가 없으면 고른 종류를 붙인다. `note.` 같은 꼴은 위에서 이미 걸러졌다.
+    if !last.contains('.') {
+        path.set_extension(ext);
+    }
+
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if RESERVED_STEMS.contains(&stem.as_str()) {
+        return Err(format!("`{stem}` 은 윈도우 예약 이름입니다"));
+    }
+
+    Ok(path)
+}
+
+/// 새로 만든 파일에 넣어 둘 내용.
+///
+/// 마크다운은 제목 한 줄로 시작한다 — 빈 문서를 열어 놓고 무엇부터 쓸지 고민하는 것보다,
+/// 파일 이름이 그대로 제목이 되어 있는 편이 이어 쓰기 쉽다. 평문은 손대지 않는다.
+fn seed_content(path: &Path) -> String {
+    if !is_markdown(path) {
+        return String::new();
+    }
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("문서");
+    format!("# {stem}\n\n")
+}
+
+/// 빈 블럭에 새 파일을 만들어 곧바로 연다.
+///
+/// 만드는 것과 여는 것을 한 명령으로 묶는다 — 둘로 나누면 파일만 생기고 창은 비어 있는
+/// 중간 상태가 생기고, 그 사이에 다른 조작이 끼어들 수 있다.
+#[tauri::command]
+pub fn pane_create_file(
+    state: State<'_, AppState>,
+    session_id: String,
+    pane_id: String,
+    name: String,
+    kind: String,
+) -> Result<Snapshot, String> {
+    let cwd = {
+        let snap = state.snapshot.lock();
+        let session = snap
+            .session(&session_id)
+            .ok_or_else(|| "세션을 찾을 수 없습니다".to_string())?;
+        PathBuf::from(&session.cwd)
+    };
+    if !cwd.is_dir() {
+        return Err(format!("세션 폴더를 찾을 수 없습니다: {}", cwd.display()));
+    }
+
+    let path = resolve_new_path(&cwd, &name, &kind)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("폴더를 만들 수 없습니다: {e}"))?;
+    }
+
+    let body = seed_content(&path);
+    // `create_new` 라야 이미 있는 파일을 덮어쓰지 않는다 — 먼저 `exists()` 로 보고 쓰면
+    // 그 사이에 생긴 파일을 날릴 수 있다.
+    {
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::AlreadyExists => "이미 있는 파일입니다".to_string(),
+                _ => format!("파일을 만들 수 없습니다: {e}"),
+            })?;
+        file.write_all(body.as_bytes())
+            .map_err(|e| format!("파일을 쓸 수 없습니다: {e}"))?;
+    }
+
+    let md = is_markdown(&path);
+    let title = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("untitled")
+        .to_string();
+    let full = path.to_string_lossy().to_string();
+
+    mutate(&state, &session_id, |s| {
+        let pane = s
+            .pane_mut(&pane_id)
+            .ok_or_else(|| "창을 찾을 수 없습니다".to_string())?;
+        if pane.kind != PaneKind::Empty {
+            return Err("빈 블럭에만 열 수 있습니다".into());
+        }
+        pane.kind = if md { PaneKind::Md } else { PaneKind::Text };
+        pane.title = title.clone();
+        pane.path = Some(full.clone());
+        pane.content = Some(if md { body.clone() } else { text_to_html(&body) });
+        // 방금 만든 빈 문서는 읽을 것이 없다 — 곧바로 쓸 수 있게 에디터로 연다.
+        pane.mode = md.then_some(MdMode::Edit);
+        pane.image_zoom = None;
+        pane.dirty = false;
+        Ok(())
+    })
+}
+
 /// 파일을 빈 블럭에 연다. md 는 뷰어로, 이미지는 이미지 뷰어로,
 /// 나머지는 텍스트 에디터로 — 디자인 규칙에 이미지만 더했다.
 #[tauri::command]
@@ -586,6 +740,78 @@ c"
         assert!(is_image(Path::new("a.webp")));
         assert!(!is_markdown(Path::new("a.webp")));
         assert!(!is_image(Path::new("README.md")));
+    }
+
+    #[test]
+    fn a_new_name_without_an_extension_gets_the_chosen_one() {
+        let cwd = Path::new("/work");
+        assert_eq!(
+            resolve_new_path(cwd, "메모", "md").unwrap(),
+            Path::new("/work/메모.md")
+        );
+        assert_eq!(
+            resolve_new_path(cwd, "메모", "txt").unwrap(),
+            Path::new("/work/메모.txt")
+        );
+    }
+
+    #[test]
+    fn a_name_that_already_has_an_extension_is_left_alone() {
+        let cwd = Path::new("/work");
+        assert_eq!(
+            resolve_new_path(cwd, "readme.markdown", "md").unwrap(),
+            Path::new("/work/readme.markdown")
+        );
+        // 종류와 확장자가 어긋나도 적은 이름이 이긴다 — 여는 모습은 확장자가 정한다.
+        assert_eq!(
+            resolve_new_path(cwd, "notes.txt", "md").unwrap(),
+            Path::new("/work/notes.txt")
+        );
+    }
+
+    #[test]
+    fn a_relative_subfolder_is_allowed() {
+        assert_eq!(
+            resolve_new_path(Path::new("/work"), "docs\\layout", "md").unwrap(),
+            Path::new("/work/docs/layout.md")
+        );
+    }
+
+    #[test]
+    fn new_names_cannot_escape_the_session_folder() {
+        let cwd = Path::new("/work");
+        assert!(resolve_new_path(cwd, "../secret.md", "md").is_err());
+        assert!(resolve_new_path(cwd, "docs/../../secret.md", "md").is_err());
+        assert!(resolve_new_path(cwd, "/etc/passwd", "txt").is_err());
+        assert!(resolve_new_path(cwd, "\\\\server\\share\\a.md", "md").is_err());
+        // `:` 은 금지 글자라 드라이브 문자로 시작하는 절대 경로도 여기서 막힌다.
+        assert!(resolve_new_path(cwd, "C:/Windows/a.txt", "txt").is_err());
+    }
+
+    #[test]
+    fn windows_hostile_names_are_refused() {
+        let cwd = Path::new("/work");
+        assert!(resolve_new_path(cwd, "", "md").is_err());
+        assert!(resolve_new_path(cwd, "   ", "md").is_err());
+        assert!(resolve_new_path(cwd, "a?b.md", "md").is_err());
+        assert!(resolve_new_path(cwd, "a|b.md", "md").is_err());
+        // 윈도우가 조용히 지우는 끝의 점·공백.
+        assert!(resolve_new_path(cwd, "메모.", "md").is_err());
+        assert!(resolve_new_path(cwd, "메모 ", "md").is_ok(), "바깥 공백은 다듬는다");
+        // 예약 장치 이름.
+        assert!(resolve_new_path(cwd, "nul", "txt").is_err());
+        assert!(resolve_new_path(cwd, "COM1.md", "md").is_err());
+    }
+
+    #[test]
+    fn an_unknown_kind_is_refused() {
+        assert!(resolve_new_path(Path::new("/work"), "a", "exe").is_err());
+    }
+
+    #[test]
+    fn a_new_markdown_file_starts_with_its_name_as_a_heading() {
+        assert_eq!(seed_content(Path::new("/work/설계 노트.md")), "# 설계 노트\n\n");
+        assert_eq!(seed_content(Path::new("/work/notes.txt")), "");
     }
 
     #[test]

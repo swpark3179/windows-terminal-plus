@@ -64,6 +64,7 @@ pub fn run() {
             commands::files::fs_read_image,
             commands::files::pane_set_image_zoom,
             commands::files::pane_open_file,
+            commands::files::pane_create_file,
             commands::files::pane_set_content,
             commands::files::pane_save,
             commands::link::link_open,

@@ -1132,14 +1132,281 @@ button {
   line-height: 1.75;
 }
 
-.md-view {
+/* ── 마크다운 뷰어: 창 구성 ─────────────────────────
+ *
+ * 색은 전부 `.md-pane` 위의 토큰으로만 쓴다. 어두운 테마는 그 토큰만 갈아 끼우면 되고,
+ * 본문 HTML 은 밝을 때와 한 글자도 다르지 않다.
+ */
+
+.md-pane {
+  --md-bg: var(--panel);
+  --md-chrome: var(--field);
+  --md-ink: #26251f;
+  --md-ink-soft: #4a4741;
+  --md-faint: var(--muted-2);
+  --md-line: var(--line-soft);
+  --md-line-2: var(--line-strong);
+  --md-accent: var(--accent);
+  --md-accent-deep: var(--accent-deep);
+  --md-quote-bg: #faf7f2;
+  --md-head-bg: #f6f4ee;
+  --md-code-bg: var(--field);
+  --md-code-head: #efece3;
+  --md-mark: #f6dd8e;
+  --md-mark-on: #f0a860;
+
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--md-bg);
+}
+
+.md-pane--dark {
+  --md-bg: #26241f;
+  --md-chrome: #2e2c26;
+  --md-ink: #e6e2d8;
+  --md-ink-soft: #c4bfb2;
+  --md-faint: #948e81;
+  --md-line: #3c392f;
+  --md-line-2: #4a463b;
+  --md-accent: #d99b74;
+  --md-accent-deep: #e8b48f;
+  --md-quote-bg: #2d2a23;
+  --md-head-bg: #33302a;
+  --md-code-bg: #201e1a;
+  --md-code-head: #2b2924;
+  --md-mark: #6b5220;
+  --md-mark-on: #a06a24;
+}
+
+.md-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  background: var(--md-chrome);
+  border-bottom: 1px solid var(--md-line);
+}
+
+.md-bar__btn {
+  height: 21px;
+  padding: 0 7px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--md-faint);
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.md-bar__btn:hover:not(:disabled) {
+  border-color: var(--md-line-2);
+  color: var(--md-ink);
+}
+
+.md-bar__btn.is-on {
+  border-color: var(--md-accent);
+  color: var(--md-accent-deep);
+}
+
+.md-bar__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.md-bar__sep {
+  width: 1px;
+  height: 14px;
+  background: var(--md-line-2);
+  margin: 0 3px;
+}
+
+.md-bar__font {
+  height: 21px;
+  padding: 0 4px;
+  border-radius: 5px;
+  border: 1px solid var(--md-line-2);
+  background: var(--md-bg);
+  color: var(--md-ink-soft);
+  font-size: 10.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.md-bar__stats {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 9.5px;
+  font-family: var(--mono);
+  color: var(--md-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 문서 안에서 찾기 */
+
+.md-find {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  background: var(--md-chrome);
+  border-bottom: 1px solid var(--md-line);
+}
+
+.md-find__input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 5px;
+  border: 1px solid var(--md-line-2);
+  background: var(--md-bg);
+  color: var(--md-ink);
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.md-find__input:focus {
+  outline: none;
+  border-color: var(--md-accent);
+}
+
+.md-find__count {
+  min-width: 46px;
+  text-align: center;
+  font-size: 9.5px;
+  font-family: var(--mono);
+  color: var(--md-faint);
+}
+
+.md-find__btn {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--md-faint);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.md-find__btn:hover:not(:disabled) {
+  background: var(--md-line);
+  color: var(--md-ink);
+}
+
+.md-find__btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* 목차 */
+
+.md-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.md-toc {
+  flex: 0 0 auto;
+  width: 168px;
+  min-width: 108px;
+  max-width: 40%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--md-line);
+  background: var(--md-chrome);
+  /* 창을 좁게 나눠 놓았을 때 목차가 본문을 밀어내지 않게 한다. */
+  resize: horizontal;
+  overflow: hidden;
+}
+
+.md-toc__head {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--md-faint);
+  font-family: var(--mono);
+  border-bottom: 1px solid var(--md-line);
+}
+
+.md-toc__list {
   flex: 1;
   overflow-y: auto;
-  padding: 20px 26px;
-  background: var(--panel);
-  color: #26251f;
+  padding: 4px 0 8px;
+}
+
+.md-toc__item {
+  display: block;
+  width: 100%;
+  padding: 3px 9px 3px 8px;
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--md-ink-soft);
+  background: transparent;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.md-toc__item:hover {
+  background: var(--md-line);
+  color: var(--md-ink);
+}
+
+.md-toc__item.is-on {
+  border-left-color: var(--md-accent);
+  color: var(--md-accent-deep);
+  font-weight: 500;
+}
+
+/* 본문 */
+
+.md-view {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 26px 40px;
+  background: var(--md-bg);
+  color: var(--md-ink);
   user-select: text;
   line-height: 1.8;
+}
+
+.md-doc {
+  min-width: 0;
+}
+
+/* 한 줄이 너무 길면 눈이 다음 줄 첫머리를 놓친다 — 참고 저장소와 같은 읽기 폭. */
+.md-doc--narrow {
+  max-width: 46em;
+  margin: 0 auto;
+}
+
+/* 읽은 만큼을 알려 주는 얇은 막대. */
+.md-progress {
+  flex: 0 0 auto;
+  height: 2px;
+  background: var(--md-line);
+}
+
+.md-progress__fill {
+  height: 100%;
+  background: var(--md-accent);
+  transition: width 90ms linear;
 }
 
 .md-edit {
@@ -1155,24 +1422,248 @@ button {
   line-height: 1.75;
 }
 
+/* ── 마크다운 뷰어: 본문 서식 ─────────────────────── */
+
+.md-head {
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 0.9em 0 0.4em;
+  color: var(--md-ink);
+  /* 목차에서 눌러 온 제목이 창 맨 위에 딱 붙지 않도록. */
+  scroll-margin-top: 8px;
+}
+
+.md-head--1 {
+  font-size: 1.55em;
+}
+.md-head--2 {
+  font-size: 1.28em;
+}
+.md-head--3 {
+  font-size: 1.1em;
+}
+.md-head--4,
+.md-head--5,
+.md-head--6 {
+  font-size: 1em;
+}
+.md-head--5,
+.md-head--6 {
+  color: var(--md-ink-soft);
+}
+
+.md-head--1,
+.md-head--2 {
+  border-bottom: 1px solid var(--md-line);
+  padding-bottom: 0.25em;
+}
+
+.md-p {
+  margin: 0.55em 0;
+  white-space: pre-line;
+}
+
+.md-list {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+
+.md-list--bul {
+  list-style: disc;
+}
+
+.md-list--ord {
+  list-style: decimal;
+}
+
+.md-list .md-list {
+  margin: 0.15em 0;
+}
+
+.md-item {
+  margin: 0.15em 0;
+}
+
+/* 체크 항목은 글머리 기호 대신 상자를 쓴다. */
+.md-item--task {
+  list-style: none;
+  margin-left: -1.15em;
+}
+
+.md-task {
+  color: var(--md-faint);
+  margin-right: 0.35em;
+}
+
+.md-task--done {
+  color: #3f7a37;
+}
+
+.md-pane--dark .md-task--done {
+  color: #93c07f;
+}
+
+.md-rule {
+  border: none;
+  border-top: 1px solid var(--md-line-2);
+  margin: 1.2em 0;
+}
+
+.md-quote {
+  border-left: 3px solid var(--md-accent);
+  background: var(--md-quote-bg);
+  padding: 2px 13px;
+  margin: 0.6em 0;
+  color: var(--md-ink-soft);
+}
+
+.md-quote > .md-p:first-child {
+  margin-top: 0.5em;
+}
+
+.md-quote > .md-p:last-child {
+  margin-bottom: 0.5em;
+}
+
+/* 표는 창이 좁을 때 본문을 밀어내지 않고 저 혼자 가로로 넘어간다. */
+.md-table-wrap {
+  margin: 0.7em 0;
+  overflow-x: auto;
+}
+
+.md-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.94em;
+}
+
+.md-cell {
+  border: 1px solid var(--md-line-2);
+  padding: 6px 10px;
+}
+
+.md-cell--left {
+  text-align: left;
+}
+.md-cell--center {
+  text-align: center;
+}
+.md-cell--right {
+  text-align: right;
+}
+
+th.md-cell {
+  background: var(--md-head-bg);
+  font-weight: 600;
+}
+
+.md-link {
+  color: var(--md-accent-deep);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.md-link:hover {
+  color: var(--md-accent);
+}
+
+/* 옆 문서를 가리키는 링크 — 눌러서 여는 자리라는 것을 점선으로 알린다. */
+.md-link--rel {
+  text-decoration-style: dashed;
+}
+
+/* 열 수 없는 주소는 링크로 만들지 않는다. */
+.md-link--blocked {
+  color: var(--md-faint);
+  text-decoration: line-through;
+  cursor: default;
+}
+
+.md-strike {
+  color: var(--md-faint);
+}
+
+.md-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 0.3em 0;
+}
+
+/* 웹뷰가 직접 읽을 수 없는 그림 — 자리와 설명만 남긴다. */
+.md-img-miss {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px dashed var(--md-line-2);
+  border-radius: 6px;
+  color: var(--md-faint);
+  font-size: 0.9em;
+}
+
+.md-img-miss__icon {
+  color: var(--md-accent);
+}
+
+/* 문서 맨 앞의 메타데이터 블록. */
+.md-front {
+  margin: 0 0 1em;
+  border: 1px solid var(--md-line);
+  border-radius: 8px;
+  background: var(--md-chrome);
+  padding: 8px 12px;
+}
+
+.md-front__label {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--md-faint);
+  font-family: var(--mono);
+  margin-bottom: 4px;
+}
+
+.md-front__body {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.86em;
+  color: var(--md-ink-soft);
+  white-space: pre-wrap;
+}
+
+/* 찾은 자리. 지금 보고 있는 하나만 진하다. */
+mark.md-hit {
+  background: var(--md-mark);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+mark.md-hit--on {
+  background: var(--md-mark-on);
+  box-shadow: 0 0 0 1px var(--md-accent-deep);
+}
+
 /* ── 마크다운 뷰어: 코드 블록 · 다이어그램 ─────────── */
 
 .md-inline-code {
-  background: var(--grid-bg);
-  border: 1px solid var(--line-strong);
+  background: var(--md-code-bg, var(--grid-bg));
+  border: 1px solid var(--md-line-2, var(--line-strong));
   border-radius: 4px;
   padding: 0 4px;
   font-family: var(--mono);
   font-size: 0.9em;
-  color: #7a5232;
+  color: var(--md-accent-deep, #7a5232);
 }
 
 .md-code {
   margin: 0.8em 0;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--md-line, var(--line-soft));
   border-radius: 8px;
   overflow: hidden;
-  background: var(--field);
+  background: var(--md-code-bg, var(--field));
 }
 
 .md-code__head {
@@ -1180,24 +1671,24 @@ button {
   align-items: center;
   gap: 8px;
   padding: 4px 6px 4px 11px;
-  background: #efece3;
-  border-bottom: 1px solid var(--line-soft);
+  background: var(--md-code-head, #efece3);
+  border-bottom: 1px solid var(--md-line, var(--line-soft));
 }
 
 .md-code__lang {
   font-size: 9.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--muted-2);
+  color: var(--md-faint, var(--muted-2));
   font-family: var(--mono);
   flex: 1;
 }
 
 .md-code__copy {
   font-size: 10px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  background: var(--panel);
+  color: var(--md-faint, var(--muted));
+  border: 1px solid var(--md-line-2, var(--line));
+  background: var(--md-bg, var(--panel));
   border-radius: 5px;
   padding: 2px 8px;
   cursor: pointer;
@@ -1213,14 +1704,14 @@ button {
   margin: 0;
   padding: 11px 13px;
   overflow-x: auto;
-  background: var(--field);
+  background: var(--md-code-bg, var(--field));
 }
 
 .md-code__body code {
   font-family: var(--mono);
   font-size: 0.9em;
   line-height: 1.6;
-  color: var(--ink-2);
+  color: var(--md-ink, var(--ink-2));
   white-space: pre;
 }
 
@@ -1279,12 +1770,59 @@ button {
   font-weight: 700;
 }
 
+/* 어두운 테마의 문법 강조 — 밝은 배경용 색을 그대로 쓰면 배경에 묻힌다. */
+.md-pane--dark .hljs-comment,
+.md-pane--dark .hljs-quote {
+  color: #8a8578;
+}
+.md-pane--dark .hljs-keyword,
+.md-pane--dark .hljs-selector-tag,
+.md-pane--dark .hljs-literal,
+.md-pane--dark .hljs-doctag {
+  color: #e0916d;
+}
+.md-pane--dark .hljs-string,
+.md-pane--dark .hljs-regexp,
+.md-pane--dark .hljs-addition {
+  color: #9ec98c;
+}
+.md-pane--dark .hljs-number,
+.md-pane--dark .hljs-symbol,
+.md-pane--dark .hljs-bullet {
+  color: #d8b06a;
+}
+.md-pane--dark .hljs-title,
+.md-pane--dark .hljs-section,
+.md-pane--dark .hljs-name,
+.md-pane--dark .hljs-selector-id,
+.md-pane--dark .hljs-selector-class {
+  color: #8fb3e8;
+}
+.md-pane--dark .hljs-type,
+.md-pane--dark .hljs-class .hljs-title,
+.md-pane--dark .hljs-built_in {
+  color: #b39ce6;
+}
+.md-pane--dark .hljs-attr,
+.md-pane--dark .hljs-attribute,
+.md-pane--dark .hljs-variable,
+.md-pane--dark .hljs-template-variable {
+  color: #d9bd93;
+}
+.md-pane--dark .hljs-meta,
+.md-pane--dark .hljs-meta .hljs-keyword {
+  color: #9b9587;
+}
+.md-pane--dark .hljs-deletion {
+  color: #e08a6d;
+}
+
 .md-mermaid {
   margin: 0.9em 0;
   padding: 14px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--md-line, var(--line-soft));
   border-radius: 8px;
-  background: var(--panel);
+  background: var(--md-bg, var(--panel));
   overflow-x: auto;
   text-align: center;
 }
@@ -1861,6 +2399,84 @@ button {
   font-size: 10px;
   color: var(--muted-2);
   white-space: nowrap;
+}
+
+.newfile {
+  width: min(520px, 92vw);
+}
+
+.newfile__body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px 16px;
+}
+
+.newfile__kinds {
+  display: flex;
+  gap: 6px;
+}
+
+.newfile__kind {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 30px;
+  padding: 0 13px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.newfile__kind:hover {
+  border-color: var(--accent-line);
+}
+
+.newfile__kind.is-on {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent-deep);
+}
+
+.newfile__kind-ext {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted-2);
+}
+
+.newfile__kind.is-on .newfile__kind-ext {
+  color: var(--accent);
+}
+
+.newfile__name {
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--field);
+  color: var(--ink);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.newfile__name:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
+.newfile__note {
+  font-size: 10.5px;
+  color: var(--muted-2);
+  min-height: 14px;
+  word-break: break-all;
+}
+
+.newfile__note--bad {
+  color: var(--accent-deep);
 }
 
 .picker__foot {

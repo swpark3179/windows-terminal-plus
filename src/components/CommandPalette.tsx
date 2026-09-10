@@ -46,6 +46,11 @@ export function CommandPalette() {
         label: '빈 블럭에 파일 열기…',
         run: () => (firstEmpty ? store.openPicker(firstEmpty.id) : noRoom()),
       },
+      {
+        icon: '✚',
+        label: '빈 블럭에 새 파일 만들기… (md · txt)',
+        run: () => (firstEmpty ? store.openNewFile(firstEmpty.id) : noRoom()),
+      },
       { icon: '⚙', label: '세션 설정', shortcut: 'Ctrl+,', run: () => store.openSettings() },
       { icon: '⊞', label: '레이아웃 편집 모드', shortcut: 'Ctrl+E', run: () => store.toggleEdit() },
       { icon: '◧', label: '사이드바 접기 / 펼치기', shortcut: 'Ctrl+B', run: () => store.toggleSidebar() },

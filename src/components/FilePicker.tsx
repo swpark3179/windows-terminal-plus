@@ -10,6 +10,7 @@ export function FilePicker() {
   const snapshot = useStore((s) => s.snapshot);
   const closePicker = useStore((s) => s.closePicker);
   const openFile = useStore((s) => s.openFile);
+  const openNewFile = useStore((s) => s.openNewFile);
   const flash = useStore((s) => s.flash);
 
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -96,6 +97,9 @@ export function FilePicker() {
             md 는 마크다운 뷰어, 이미지는 이미지 뷰어, 나머지는 텍스트 에디터로 열립니다
           </div>
           <div className="spacer" />
+          <button className="ghost-btn" onClick={() => openNewFile(picker.paneId)}>
+            새 파일…
+          </button>
           <button className="ghost-btn" onClick={() => void pickFromDisk()}>
             PC 에서 선택…
           </button>

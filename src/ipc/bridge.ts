@@ -15,6 +15,7 @@ import type {
   MdMode,
   MergeResult,
   MergeVerdict,
+  NewFileKind,
   SaveResult,
   SessionPatch,
   Snapshot,
@@ -112,6 +113,17 @@ export const setPaneImageZoom = (sessionId: string, paneId: string, zoom: number
   invoke<void>('pane_set_image_zoom', { sessionId, paneId, zoom });
 export const openFilePane = (sessionId: string, paneId: string, path: string) =>
   invoke<Snapshot>('pane_open_file', { sessionId, paneId, path });
+
+/**
+ * 세션 폴더 아래에 새 파일을 만들어 그 자리에서 연다.
+ * 만들기와 열기가 한 명령인 이유는 `commands/files.rs` 에 적어 두었다.
+ */
+export const createFilePane = (
+  sessionId: string,
+  paneId: string,
+  name: string,
+  kind: NewFileKind,
+) => invoke<Snapshot>('pane_create_file', { sessionId, paneId, name, kind });
 export const setPaneContent = (sessionId: string, paneId: string, content: string) =>
   invoke<void>('pane_set_content', { sessionId, paneId, content });
 export const savePane = (sessionId: string, paneId: string) =>
