@@ -17,6 +17,7 @@ import type {
   MergeResult,
   MergeVerdict,
   NewFileKind,
+  Revealed,
   SaveResult,
   SessionPatch,
   Snapshot,
@@ -148,6 +149,16 @@ export const savePane = (sessionId: string, paneId: string) =>
  * 다루지 않는 팝업이 뜬다. 주소 검사도 Rust 에서 한다 (`commands/link.rs`).
  */
 export const openExternalUrl = (url: string) => invoke<void>('link_open', { url });
+
+// ── 탐색기 ───────────────────────────────────────────────
+/**
+ * 이 터미널이 서 있는 폴더를 파일 탐색기로 연다 (창 메뉴의 `탐색기로 열기`).
+ *
+ * 어느 폴더인지는 Rust 가 정한다 — 셸이 지금 알려 주고 있는 값이 먼저이고, 없으면 창에 적힌
+ * 폴더, 세션 폴더 순으로 물러난다. 폴더 문자열은 화면 속 프로그램이 정할 수 있으므로 검사도
+ * 그쪽에서 한다 (`commands/reveal.rs`).
+ */
+export const revealPaneCwd = (paneId: string) => invoke<Revealed>('pane_reveal_cwd', { paneId });
 
 // ── 클립보드 ─────────────────────────────────────────────
 //

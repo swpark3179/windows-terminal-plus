@@ -135,6 +135,8 @@ interface AppState {
   zoomReset: (paneId: string) => Promise<void>;
   setMdMode: (paneId: string, mode: MdMode) => Promise<void>;
   savePane: (paneId: string) => Promise<void>;
+  /** 이 터미널이 서 있는 폴더를 파일 탐색기로 연다. */
+  revealCwd: (paneId: string) => Promise<void>;
 
   /** 세션 이름을 묻는 창을 연다. 세션은 이름을 받은 뒤에 만들어진다. */
   openNewSession: () => void;
@@ -588,6 +590,22 @@ export const useStore = create<AppState>((set, get) => ({
       const res = await api.savePane(snapshot.activeId, paneId);
       apply(res.snapshot);
       flash(`저장됨 · ${res.path.split(/[\\/]/).pop()} (${res.bytes} B)`);
+    }, flash);
+  },
+
+  revealCwd: async (paneId) => {
+    const { flash } = get();
+    await guard(async () => {
+      // 어느 폴더를 여는지는 Rust 가 정한다 — 셸이 지금 알려 주고 있는 값이 먼저다
+      // (`commands/reveal.rs`). 물러난 자리에서 열었으면 그렇다고 적어 준다.
+      const { path, source } = await api.revealPaneCwd(paneId);
+      flash(
+        source === 'live'
+          ? `탐색기 · ${path}`
+          : source === 'last'
+            ? `셸이 지금 폴더를 알려 주지 않아 마지막으로 알던 폴더를 엽니다 · ${path}`
+            : `셸이 폴더를 알려 주지 않아 세션 폴더를 엽니다 · ${path}`,
+      );
     }, flash);
   },
 

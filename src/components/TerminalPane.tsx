@@ -225,13 +225,80 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       paste: pasteClipboard,
     });
 
+    /**
+     * 줄바꿈 — 한글을 치던 중이면 그 글자 뒤로 미룬다.
+     *
+     * 조합 중인 음절은 xterm 이 **조합이 끝난 다음 틱에** 내보낸다. `compositionend` 자리에서
+     * 곧바로 보내지 않고 `setTimeout(…, 0)` 으로 미루는데(`CompositionHelper` 의
+     * `_finalizeComposition`), 브라우저가 `compositionend` **뒤에** 밀어 넣는 `input` 이벤트까지
+     * 봐야 진짜로 확정된 글자를 알 수 있기 때문이다.
+     *
+     * 그래서 `Shift+Enter` 를 누른 그 자리에서 줄바꿈을 곧바로 써 버리면 아직 나가지 않은 그
+     * 음절을 앞질러 버린다 — `claude`·`codex` 에서 **마지막 글자가 다음 줄 머리로 밀리던** 자리다.
+     * 조합이 끝나기를 기다렸다가 보내면 순서가 지켜진다. 이 처리기는 xterm 것보다 나중에 붙으므로
+     * (터미널을 연 뒤에 붙인다) 여기서 잡는 `setTimeout(…, 0)` 도 xterm 이 먼저 잡아 둔 것 뒤에
+     * 놓인다 — 음절이 먼저, 줄바꿈이 뒤.
+     *
+     * 미룰 자리를 알아내는 데 키 이벤트의 `isComposing` 만으로는 모자란다. 크로미움은 IME 가
+     * 음절을 확정하며 넘긴 `Enter` 를 `compositionend` **뒤에** 주기도 하는데, 그때도 글자는
+     * 아직 위의 `setTimeout` 안에 남아 있다. 그래서 조합의 시작과 끝을 우리가 직접 따라간다.
+     */
+    const textarea = term.textarea;
+    /** 지금 조합 중인가 (`compositionstart` ~ `compositionend`). */
+    let composing = false;
+    /** 조합이 끝나 xterm 이 그 글자를 내보내기를 기다리는 중. */
+    let flushTimer: ReturnType<typeof setTimeout> | undefined;
+    /** 그 사이에 눌린 줄바꿈 수. */
+    let heldNewlines = 0;
+
+    const sendNewline = () => {
+      // 스크롤을 올려 둔 채 넣은 줄이 화면 밖에 남지 않게 한다 — 키를 가로챈 탓에
+      // xterm 이 원래 하는 자동 스크롤이 건너뛰어진다.
+      term.scrollToBottom();
+      // ConPTY 가 win32-input-mode 를 청했으면 진짜 키 이벤트로, 아니면 예전처럼 순수 LF 로.
+      // 어느 쪽이든 바이트로 펴지는 곳에는 LF 가 닿는다 (`lib/win32Input.ts`).
+      void writePty(pane.id, newlineSequence(pane.id)).catch(() => {});
+    };
+
+    const releaseNewlines = () => {
+      flushTimer = undefined;
+      const held = heldNewlines;
+      heldNewlines = 0;
+      for (let i = 0; i < held; i += 1) sendNewline();
+    };
+
+    const pressNewline = () => {
+      // 조합 중이거나, 조합이 방금 끝나 글자가 아직 나가지 않았으면 그 뒤로 미룬다.
+      if (composing || flushTimer !== undefined) {
+        heldNewlines += 1;
+        return;
+      }
+      sendNewline();
+    };
+
+    const onCompositionStart = () => {
+      composing = true;
+    };
+    const onCompositionEnd = () => {
+      composing = false;
+      clearTimeout(flushTimer);
+      flushTimer = setTimeout(releaseNewlines, 0);
+    };
+    textarea?.addEventListener('compositionstart', onCompositionStart);
+    textarea?.addEventListener('compositionend', onCompositionEnd);
+
     term.attachCustomKeyEventHandler((e) => {
       const action = terminalKeyAction(e);
-      // 한글 조합 중에는 클립보드 조합 말고 아무것도 가로채지 않는다. 조합 중인 음절은 아직 PTY 로
-      // 가지 않았을 수 있어, 다른 키를 앞질러 보내면 입력 순서가 뒤집힌다. 복사·붙여넣기는 조합에
-      // 섞이는 조합이 아니고, 클립보드 읽기가 비동기라 사실상 조합이 먼저 끝난다.
-      const clipboard = action === 'copy' || action === 'paste' || action === 'copy-if-selection';
-      if (!clipboard && (e.isComposing || e.keyCode === 229)) return true;
+      // 한글 조합 중에는 클립보드·줄바꿈 말고 아무것도 가로채지 않는다. 조합 중인 음절은 아직
+      // PTY 로 가지 않았을 수 있어, 다른 키를 앞질러 보내면 입력 순서가 뒤집힌다. 복사·붙여넣기는
+      // 조합에 섞이는 조합이 아니고, 클립보드 읽기가 비동기라 사실상 조합이 먼저 끝난다.
+      // 줄바꿈은 조합이 끝난 뒤로 미뤄 보내므로(`pressNewline`) 역시 순서를 어기지 않는다.
+      const safeWhileComposing =
+        action === 'copy' ||
+        action === 'paste' ||
+        action === 'copy-if-selection' ||
+        action === 'newline';
+      if (!safeWhileComposing && (e.isComposing || e.keyCode === 229)) return true;
 
       if (action) {
         // 선택이 없으면 Ctrl+C 는 예전처럼 셸로 가 실행 중인 명령을 끊는다.
@@ -252,10 +319,7 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
           } else if (action === 'clear') {
             clearScrollback();
           } else if (action === 'newline') {
-            // ConPTY 가 win32-input-mode 를 청했으면 진짜 Shift+Enter 키 이벤트로, 아니면 예전처럼
-            // 순수 LF 로 보낸다. 어느 쪽이든 바이트로 펴지는 곳에는 LF 가 닿는다 (`lib/win32Input.ts`).
-            term.scrollToBottom();
-            void writePty(pane.id, newlineSequence(pane.id)).catch(() => {});
+            pressNewline();
           } else {
             void copySelection();
           }
@@ -368,6 +432,9 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       bellSub.dispose();
       clearTimeout(bellTimer);
       bodyRef.current?.classList.remove('term-body--bell');
+      clearTimeout(flushTimer);
+      textarea?.removeEventListener('compositionstart', onCompositionStart);
+      textarea?.removeEventListener('compositionend', onCompositionEnd);
       links.dispose();
       modeHandlers.forEach((h) => h.dispose());
       unregisterClipboard();

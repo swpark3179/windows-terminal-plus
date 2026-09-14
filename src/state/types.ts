@@ -173,6 +173,19 @@ export interface InheritCwd {
   cwd: string;
 }
 
+/**
+ * 탐색기로 연 폴더와, 그 폴더를 어디서 알아냈는지 (`pane_reveal_cwd`).
+ *
+ * `live` 는 셸이 지금 알려 주고 있는 폴더 — 그 터미널의 `pwd` 다. 셸 통합이 없거나 셸이
+ * 끝났으면 창에 마지막으로 적힌 폴더(`last`)로, 그것마저 없으면 세션 폴더(`session`)로 물러난다.
+ */
+export type CwdSource = 'live' | 'last' | 'session';
+
+export interface Revealed {
+  path: string;
+  source: CwdSource;
+}
+
 export interface SessionPatch {
   name?: string;
   cwd?: string;

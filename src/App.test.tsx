@@ -394,6 +394,35 @@ describe('나눈 자리에서 여는 터미널', () => {
   });
 });
 
+describe('탐색기로 열기', () => {
+  /** 터미널 창의 우클릭 메뉴 항목들. */
+  const menuLabels = () =>
+    Array.from(document.querySelectorAll('.menu__label')).map((el) => el.textContent);
+
+  it('터미널 메뉴 맨 아래에서 그 터미널의 폴더를 연다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.contextMenu(paneEl(TERM_PANE));
+    // 맨 아래에 있어야 한다 — 늘 같은 자리라 눈으로 찾지 않고 누를 수 있다.
+    expect(menuLabels().at(-1)).toBe('탐색기로 열기');
+
+    fireEvent.click(screen.getByText('탐색기로 열기'));
+
+    await waitFor(() => expect(backend.lastArgs('pane_reveal_cwd')).toEqual({ paneId: TERM_PANE }));
+    // 어느 폴더를 열었는지 눈으로 확인할 수 있어야 한다.
+    expect(await screen.findByText(`탐색기 · ${TERM_CWD}`)).toBeInTheDocument();
+  });
+
+  it('빈 블럭에는 나오지 않는다 — 열어 줄 폴더가 없다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.contextMenu(paneEl(EMPTY_PANE));
+    expect(menuLabels()).not.toContain('탐색기로 열기');
+  });
+});
+
 describe('병합 드래그', () => {
   it('드래그하면 Rust 판정을 물어보고 시각적 표현이 함께 나타난다', async () => {
     // 이 시나리오는 통과하는 조합.

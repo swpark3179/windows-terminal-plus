@@ -146,6 +146,8 @@ export interface Backend {
   calls: string[];
   /** 명령별 마지막 인자 — 무엇을 보냈는지 확인할 때. */
   lastArgs: (cmd: string) => Record<string, unknown> | undefined;
+  /** 명령별 인자 전부 — 보낸 **순서**까지 봐야 할 때 (한글 조합과 줄바꿈처럼). */
+  allArgs: (cmd: string) => Record<string, unknown>[];
   /** `window.destroy()` 가 불렸는지 — 실제로 종료됐다는 뜻. */
   destroyed: boolean;
   /** 닫기 확인이 취소돼 기본 동작이 막혔는지. */
@@ -161,10 +163,12 @@ export interface Backend {
 }
 
 const argLog = new Map<string, Record<string, unknown>>();
+const argHistory: { cmd: string; args: Record<string, unknown> }[] = [];
 
 export const backend: Backend = {
   calls: [],
   lastArgs: (cmd: string) => argLog.get(cmd),
+  allArgs: (cmd: string) => argHistory.filter((e) => e.cmd === cmd).map((e) => e.args),
   destroyed: false,
   closePrevented: false,
   closeHandler: null,
@@ -177,6 +181,7 @@ export const backend: Backend = {
 export function resetBackend() {
   backend.calls = [];
   argLog.clear();
+  argHistory.length = 0;
   backend.destroyed = false;
   backend.closePrevented = false;
   backend.closeHandler = null;
@@ -192,7 +197,10 @@ export function resetBackend() {
 
 export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> {
   backend.calls.push(cmd);
-  if (args && typeof args === 'object') argLog.set(cmd, args as Record<string, unknown>);
+  if (args && typeof args === 'object') {
+    argLog.set(cmd, args as Record<string, unknown>);
+    argHistory.push({ cmd, args: args as Record<string, unknown> });
+  }
   switch (cmd) {
     case 'app_boot':
       return {
@@ -255,6 +263,9 @@ export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> 
     }
     case 'pty_open':
       return { restored: '', banner: '', attached: false };
+    case 'pane_reveal_cwd':
+      // 어느 폴더를 여는지는 Rust 가 정한다 — 여기서는 셸이 알려 준 폴더를 열었다고 답한다.
+      return { path: TERM_CWD, source: 'live' };
     case 'pty_write':
     case 'pty_resize':
     case 'pty_clear':

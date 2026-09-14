@@ -5,6 +5,7 @@ pub mod files;
 pub mod layout;
 pub mod link;
 pub mod pty;
+pub mod reveal;
 pub mod session;
 
 use rterm_core::{Session, Snapshot};
