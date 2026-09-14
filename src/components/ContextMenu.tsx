@@ -30,6 +30,7 @@ export function ContextMenu() {
   const zoomReset = useStore((s) => s.zoomReset);
   const toggleFull = useStore((s) => s.toggleFull);
   const savePane = useStore((s) => s.savePane);
+  const revealCwd = useStore((s) => s.revealCwd);
   const boxRef = useRef<HTMLDivElement>(null);
 
   // 메뉴 밖을 누르면 닫는다.
@@ -149,6 +150,17 @@ export function ContextMenu() {
           run: () => requestClosePane(ctx.id),
         },
       );
+    }
+
+    // 맨 아래 — 이 터미널이 서 있는 폴더를 탐색기로. 어느 폴더인지는 Rust 가 셸의 실시간
+    // 값으로 정하고(`commands/reveal.rs`), 물러난 자리에서 열었으면 토스트가 그렇다고 알린다.
+    if (pane.kind === 'term') {
+      items.push({
+        key: 'reveal',
+        icon: '↗',
+        label: '탐색기로 열기',
+        run: () => void revealCwd(ctx.id),
+      });
     }
   }
 

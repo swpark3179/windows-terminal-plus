@@ -34,12 +34,15 @@ export class StubTerminal {
   modes = { mouseTrackingMode: 'none' as 'none' | 'x10' | 'vt200' | 'drag' | 'any' };
   /** 합성 휠이 향하는 곳 — 실제 xterm 도 `.xterm` 에 휠 처리기를 걸어 둔다. */
   element: HTMLDivElement = document.createElement('div');
+  /** 실제 xterm 이 키와 IME 조합을 받는 숨은 입력칸. 조합 이벤트는 여기로 온다. */
+  textarea: HTMLTextAreaElement = document.createElement('textarea');
 
   private _render = emitter<{ start: number; end: number }>();
   private _scroll = emitter<number>();
   private _resize = emitter<{ cols: number; rows: number }>();
   private _bufferChange = emitter<unknown>();
   private _title = emitter<string>();
+  private _data = emitter<string>();
   private _bell = emitter<void>();
 
   buffer = {
@@ -145,8 +148,8 @@ export class StubTerminal {
     this.scrolledPages.push(pages);
   }
 
-  onData() {
-    return { dispose() {} };
+  onData(fn: (v: string) => void) {
+    return this._data.on(fn);
   }
 
   onBinary() {
@@ -210,6 +213,15 @@ export class StubTerminal {
       if (h.cb(params) === true) return true;
     }
     return false;
+  }
+
+  /**
+   * xterm 이 사용자 입력을 PTY 로 흘려보낸 상황.
+   *
+   * 한글 조합은 `compositionend` 뒤 한 틱 있다가 이 길로 나간다 — 그 순서를 재현할 때 쓴다.
+   */
+  emitData(data: string) {
+    this._data.fire(data);
   }
 
   /** 셸이 OSC 0/2 로 창 제목을 알린 상황. */

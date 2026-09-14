@@ -236,6 +236,83 @@ describe('줄바꿈', () => {
   });
 });
 
+/**
+ * 한글을 치던 중의 줄바꿈.
+ *
+ * 조합 중인 음절은 xterm 이 `compositionend` 뒤 **한 틱 있다가** 내보낸다. 그 틈에 줄바꿈을
+ * 먼저 써 버리면 마지막 글자가 다음 줄 머리로 밀린다 — `claude`·`codex` 에서 보이던 자리다.
+ */
+describe('한글 조합 중의 줄바꿈', () => {
+  /** 이 테스트가 보낸 PTY 쓰기만 본다 — `backend` 는 파일 안에서 누적된다. */
+  function writeLog() {
+    const from = backend.allArgs('pty_write').length;
+    return () => backend.allArgs('pty_write').slice(from).map((a) => a.data);
+  }
+
+  it('조합 중에 누르면 그 글자가 먼저, 줄바꿈이 뒤에 간다', async () => {
+    const { term, press } = mount();
+    const writes = writeLog();
+
+    // 크로미움은 IME 가 음절을 확정하며 넘긴 Enter 를 조합 중(isComposing)으로 주기도 한다.
+    fireEvent.compositionStart(term.textarea);
+    expect(press({ key: 'Enter', shiftKey: true, isComposing: true })).toBe(false);
+    // 아직 아무것도 보내지 않았다 — 보냈다면 그 음절을 앞질러 버린다.
+    expect(writes()).toEqual([]);
+
+    fireEvent.compositionEnd(term.textarea);
+    // xterm 은 조합이 끝난 다음 틱에 그 글자를 내보낸다.
+    act(() => term.emitData('가'));
+    await waitFor(() => expect(writes()).toEqual(['가', '\n']));
+  });
+
+  it('조합이 끝난 직후에 눌러도 마찬가지다 — 글자는 아직 xterm 안에 있다', async () => {
+    const { term, press } = mount();
+    const writes = writeLog();
+
+    // 이쪽이 실제로 보이던 순서다: 브라우저가 조합을 먼저 끝내고 Enter 를 그 뒤에 준다.
+    fireEvent.compositionStart(term.textarea);
+    fireEvent.compositionEnd(term.textarea);
+    expect(press({ key: 'Enter', shiftKey: true })).toBe(false);
+    expect(writes()).toEqual([]);
+
+    act(() => term.emitData('가'));
+    await waitFor(() => expect(writes()).toEqual(['가', '\n']));
+  });
+
+  it('조합 중에 두 번 누르면 두 줄 다 그 글자 뒤로 간다', async () => {
+    const { term, press } = mount();
+    const writes = writeLog();
+
+    fireEvent.compositionStart(term.textarea);
+    press({ key: 'Enter', shiftKey: true, isComposing: true });
+    press({ key: 'Enter', shiftKey: true, isComposing: true });
+    fireEvent.compositionEnd(term.textarea);
+    act(() => term.emitData('가'));
+
+    await waitFor(() => expect(writes()).toEqual(['가', '\n', '\n']));
+  });
+
+  it('조합과 상관없을 때는 예전처럼 그 자리에서 보낸다', async () => {
+    const { term, press } = mount();
+    const writes = writeLog();
+
+    // 조합을 한 번 거친 뒤라도, 글자가 나간 다음의 줄바꿈은 미룰 이유가 없다.
+    fireEvent.compositionStart(term.textarea);
+    fireEvent.compositionEnd(term.textarea);
+    act(() => term.emitData('가'));
+    await waitFor(() => expect(writes()).toEqual(['가']));
+
+    press({ key: 'Enter', shiftKey: true });
+    expect(writes()).toEqual(['가', '\n']);
+  });
+
+  it('조합 중인 다른 키는 그대로 IME 의 것이다', () => {
+    const { term, press } = mount();
+    fireEvent.compositionStart(term.textarea);
+    expect(press({ key: 'Process', keyCode: 229, isComposing: true })).toBe(true);
+  });
+});
+
 describe('win32-input-mode', () => {
   /** ConPTY 가 부팅하며 보내는 `CSI ? 9001 h`. */
   const askForWin32 = (term: ReturnType<typeof lastTerminal>) => term.emitCsi('?', 'h', [9001]);
