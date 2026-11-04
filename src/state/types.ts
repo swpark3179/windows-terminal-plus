@@ -63,6 +63,8 @@ export interface Pane {
   cwd?: string | null;
   /** 스냅샷을 찍을 때 이 창에서 돌고 있던 AI CLI. */
   ai?: AiKind | null;
+  /** 빈 블럭: 터미널을 나눠 생겼다면 나눠 준 창. 무엇인가 열리면 지워진다. */
+  splitFrom?: SplitOrigin | null;
   path?: string | null;
   content?: string | null;
   mode?: MdMode | null;
@@ -168,9 +170,17 @@ export interface SaveResult {
  *
  * 나눌 때 본 폴더를 함께 보내므로, 그 사이 그 터미널이 자리를 옮겼으면 Rust 가 요청을 버린다.
  */
-export interface InheritCwd {
-  sourcePaneId: string;
-  cwd: string;
+/**
+ * 분할로 갓 생긴 빈 블럭이 누구에게서 나왔는지 (Rust `SplitOrigin`).
+ *
+ * 여기에 터미널을 열면 나눠 준 터미널이 **그때** 서 있는 폴더에서 뜬다. 판정은 Rust 가 탐색기로
+ * 열기와 같은 순서로 한다(셸이 지금 알려 주는 폴더 → 마지막으로 알던 폴더 → 나눌 때의 폴더).
+ */
+export interface SplitOrigin {
+  /** 나눠 준 터미널의 창 id. */
+  paneId: string;
+  /** 나눌 때 그 터미널이 서 있던 폴더 — 그 터미널이 그새 닫혔을 때의 예비값. */
+  cwd?: string | null;
 }
 
 /**

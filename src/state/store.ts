@@ -8,7 +8,6 @@
 import { create } from 'zustand';
 import * as api from '../ipc/bridge';
 import { loadPrefs, savePrefs } from '../lib/mdView';
-import { inheritForPane, inheritFromSplit, type PendingCwd } from '../lib/paneCwd';
 import type {
   MdMode,
   MdPrefs,
@@ -85,11 +84,7 @@ interface AppState {
   liveTitles: Record<string, string>;
   /** 마크다운 뷰어 표시 설정 — 창이 아니라 앱 전체의 것. */
   mdPrefs: MdPrefs;
-  /**
-   * 분할로 갓 생긴 빈 블럭이 물려받을 폴더 (`lib/paneCwd.ts`).
-   * 스냅샷을 갈아 끼우는 모든 길(`apply`)이 이것을 지운다 — 분할 직후에만 유효하다.
-   */
-  pendingCwd: PendingCwd | null;
+  
 
   // ── 액션 ────────────────────────────────────
   boot: () => Promise<void>;
@@ -211,7 +206,6 @@ export const useStore = create<AppState>((set, get) => ({
   resizeDraft: null,
   liveTitles: {},
   mdPrefs: loadPrefs(),
-  pendingCwd: null,
 
   boot: async () => {
     const boot = await api.bootApp();
@@ -243,13 +237,10 @@ export const useStore = create<AppState>((set, get) => ({
       // 여기를 지나므로, 각자 지우게 하는 것보다 한 곳에서 훑는 것이 새지 않는다.
       const ids = new Set(snapshot.sessions.flatMap((x) => x.panes.map((p) => p.id)));
       const stale = Object.keys(s.liveTitles).filter((id) => !ids.has(id));
-      // 물려받을 폴더의 기억(`pendingCwd`)도 여기서 끝난다 — 파일을 열었든 창을 닫았든
-      // 세션을 옮겼든, 상태를 바꾼 일이 하나라도 있었으면 "분할 직후" 가 아니다.
-      // 분할 자신은 이 뒤에 새 기억을 심는다(`splitPane`).
-      if (stale.length === 0) return { snapshot, pendingCwd: null };
+      if (stale.length === 0) return { snapshot };
       const liveTitles = { ...s.liveTitles };
       for (const id of stale) delete liveTitles[id];
-      return { snapshot, liveTitles, pendingCwd: null };
+      return { snapshot, liveTitles };
     }),
 
   flash: (message) => {
@@ -302,12 +293,8 @@ export const useStore = create<AppState>((set, get) => ({
     await guard(async () => {
       const res = await api.splitPane(snapshot.activeId, paneId, dir);
       apply(res.snapshot);
-      // 터미널을 나눴다면 대개 "지금 이 폴더에서 하나 더" 라는 뜻이다. 갓 생긴 빈 블럭이
-      // 곧바로 터미널이 될 때만 쓰이고, 그 사이 다른 일이 있으면 `apply` 가 지운다.
-      set({
-        sel: res.newPaneId,
-        pendingCwd: inheritFromSplit(activePanes(res.snapshot), paneId, res.newPaneId),
-      });
+      // 터미널을 나눴다면 새 블럭이 어디서 나왔는지는 Rust 가 스냅샷에 적어 둔다(`splitFrom`).
+      set({ sel: res.newPaneId });
       flash(dir === 'leftRight' ? '좌·우로 분할' : '위·아래로 분할');
     }, flash);
   },
@@ -467,21 +454,17 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   openTerminal: async (paneId) => {
-    const { snapshot, flash, apply, pendingCwd } = get();
+    const { snapshot, flash, apply } = get();
     if (!snapshot) return;
-    const inherit = inheritForPane(activePanes(snapshot), pendingCwd, paneId);
+    const split = activePanes(snapshot).find((p) => p.id === paneId)?.splitFrom;
     await guard(async () => {
-      const next = await api.openTerminalPane(
-        snapshot.activeId,
-        paneId,
-        inherit ? { sourcePaneId: inherit.sourceId, cwd: inherit.cwd } : null,
-      );
+      const next = await api.openTerminalPane(snapshot.activeId, paneId);
       apply(next);
       set({ sel: paneId });
-      // 물려받기는 Rust 가 셸의 실시간 폴더로 한 번 더 판정한다. 그래서 "물려받았다" 는
-      // 말은 돌아온 스냅샷에 폴더가 적혀 있을 때만 한다.
+      // 어느 폴더에서 뜰지는 Rust 가 나눠 준 터미널의 **지금** 폴더로 정한다. 그래서 "물려받았다" 는
+      // 말은 돌아온 스냅샷에 폴더가 적혀 있을 때만 한다 — 못 쓰는 폴더면 세션 폴더에서 뜬다.
       const opened = activePanes(next).find((p) => p.id === paneId);
-      if (inherit && opened?.cwd) flash(`직전 터미널 폴더에서 시작 · ${opened.cwd}`);
+      if (split && opened?.cwd) flash(`나눠 준 터미널 폴더에서 시작 · ${opened.cwd}`);
     }, flash);
   },
 

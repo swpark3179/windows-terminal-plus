@@ -88,9 +88,10 @@ pub fn validate(raw: &str) -> Result<&str, String> {
 /// 이 창의 폴더 후보를 아는 순서대로. 앞에서부터 열 수 있는 것을 쓴다.
 ///
 /// 스냅샷의 `pane.cwd` 는 명령이 오갈 때만 갱신돼 그 사이의 `cd` 를 놓치므로, 셸이 지금
-/// 알려 주고 있는 값(`live_cwd`)을 먼저 본다 — 나눈 자리의 터미널이 폴더를 물려받을 때와
-/// 같은 판정이다(`commands/layout.rs` 의 `pane_open_terminal`).
-fn candidates(state: &AppState, pane_id: &str) -> Vec<(CwdSource, String)> {
+/// 알려 주고 있는 값(`live_cwd`)을 먼저 본다. `include_session` 이 거짓이면 세션 폴더는 빼고
+/// **그 창 자신이 아는 폴더만** 돌려준다 — 나눈 자리가 물려받을 때는 "모른다" 와 "세션 폴더" 를
+/// 구분해야 예비값으로 물러날 수 있다.
+fn candidates(state: &AppState, pane_id: &str, include_session: bool) -> Vec<(CwdSource, String)> {
     let mut out = Vec::new();
     if let Some(cwd) = state.live_cwd(pane_id) {
         out.push((CwdSource::Live, cwd));
@@ -100,9 +101,31 @@ fn candidates(state: &AppState, pane_id: &str) -> Vec<(CwdSource, String)> {
         if let Some(cwd) = session.pane(pane_id).and_then(|p| p.cwd.clone()) {
             out.push((CwdSource::Last, cwd));
         }
-        out.push((CwdSource::Session, session.cwd.clone()));
+        if include_session {
+            out.push((CwdSource::Session, session.cwd.clone()));
+        }
     }
     out
+}
+
+/// 이 창이 서 있는 폴더 — 검사(`validate`)를 통과한 첫 후보.
+///
+/// 탐색기로 열기와 **나눈 자리의 터미널**(`commands::layout::pane_open_terminal`)이 같은 판정을
+/// 쓴다. 앞선 후보를 쓸 수 없으면(WSL 쪽 경로였다, 그새 지워졌다…) 다음 후보로 물러나고, 하나도
+/// 없으면 마지막으로 거절된 사유를 돌려준다.
+pub(crate) fn resolve_folder(
+    state: &AppState,
+    pane_id: &str,
+    include_session: bool,
+) -> Result<(CwdSource, String), String> {
+    let mut refused: Option<String> = None;
+    for (source, dir) in candidates(state, pane_id, include_session) {
+        match validate(&dir) {
+            Ok(dir) => return Ok((source, dir.to_string())),
+            Err(e) => refused = Some(e),
+        }
+    }
+    Err(refused.unwrap_or_else(|| "이 창의 폴더를 알 수 없습니다".to_string()))
 }
 
 /// 이 터미널이 서 있는 폴더를 파일 탐색기로 연다.
@@ -111,17 +134,9 @@ fn candidates(state: &AppState, pane_id: &str) -> Vec<(CwdSource, String)> {
 /// 어디를 열었는지는 돌려주는 `source` 로 알 수 있고, 화면은 그대로 토스트에 적어 준다.
 #[tauri::command]
 pub fn pane_reveal_cwd(state: State<'_, AppState>, pane_id: String) -> Result<Revealed, String> {
-    let mut refused: Option<String> = None;
-    for (source, dir) in candidates(&state, &pane_id) {
-        match validate(&dir) {
-            Ok(dir) => {
-                open_folder(dir)?;
-                return Ok(Revealed { path: dir.to_string(), source });
-            }
-            Err(e) => refused = Some(e),
-        }
-    }
-    Err(refused.unwrap_or_else(|| "이 창의 폴더를 알 수 없습니다".to_string()))
+    let (source, dir) = resolve_folder(&state, &pane_id, true)?;
+    open_folder(&dir)?;
+    Ok(Revealed { path: dir, source })
 }
 
 /// 폴더 하나를 OS 의 파일 관리자로 연다.

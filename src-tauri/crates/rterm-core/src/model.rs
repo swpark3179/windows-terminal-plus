@@ -167,6 +167,22 @@ fn fix_weights(weights: &mut Vec<f32>, len: usize) {
     }
 }
 
+/// 분할로 갓 생긴 빈 블럭이 **누구에게서 나왔는지.**
+///
+/// 터미널을 우클릭해 나누면 대개 "이 폴더에서 하나 더" 라는 뜻이다. 그래서 새 빈 블럭에 터미널을
+/// 열면 나눠 준 터미널이 **그때** 서 있는 폴더에서 시작한다(판정은 탐색기로 열기와 같다 —
+/// `commands::reveal::resolve_folder`). 화면 상태가 아니라 스냅샷에 두어, 그 사이 크기를 바꾸거나
+/// 다른 창을 나누거나 앱을 다시 켜도 잊지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitOrigin {
+    /// 나눠 준 터미널의 창 id.
+    pub pane_id: String,
+    /// 나눌 때 그 터미널이 서 있던 폴더 — 그 터미널이 그새 닫혔을 때만 쓰는 예비값.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+}
+
 /// 하나의 창(블럭). `r/c/rs/cs` 는 `grid-area: r / c / span rs / span cs` 와 1:1 대응.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -195,6 +211,9 @@ pub struct Pane {
     /// 터미널 패널: 스냅샷을 찍을 때 이 창에서 돌고 있던 AI CLI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai: Option<AiKind>,
+    /// 빈 블럭: 터미널을 나눠 생겼다면 나눠 준 창. 여기에 무엇인가 열면 지워진다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_from: Option<SplitOrigin>,
 
     /// 파일 패널: 원본 경로.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -229,6 +248,7 @@ impl Pane {
             alive: false,
             cwd: None,
             ai: None,
+            split_from: None,
             path: None,
             content: None,
             mode: None,

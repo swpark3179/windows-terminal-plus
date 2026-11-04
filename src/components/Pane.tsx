@@ -1,4 +1,3 @@
-import { inheritForPane } from '../lib/paneCwd';
 import { activePanes, useStore } from '../state/store';
 import { KIND_STYLE, ZOOM_BASE, type Pane, type Session } from '../state/types';
 import { ImagePane } from './ImagePane';
@@ -11,10 +10,12 @@ function EmptyBody({ pane }: { pane: Pane }) {
   const openTerminal = useStore((s) => s.openTerminal);
   const openPicker = useStore((s) => s.openPicker);
   const openNewFile = useStore((s) => s.openNewFile);
-  // 터미널을 나눠 갓 생긴 블럭이면 여기서 여는 터미널은 그 폴더에서 뜬다 (`lib/paneCwd.ts`).
+  // 터미널을 나눠 생긴 블럭이면 여기서 여는 터미널은 나눠 준 터미널의 **지금** 폴더에서 뜬다.
+  // 최종 판정은 열 때 Rust 가 셸의 실시간 값으로 한다 — 여기서는 지금 아는 폴더로 미리 알려 준다.
   const snapshot = useStore((s) => s.snapshot);
-  const pendingCwd = useStore((s) => s.pendingCwd);
-  const inherit = inheritForPane(activePanes(snapshot), pendingCwd, pane.id);
+  const origin = pane.splitFrom;
+  const source = origin ? activePanes(snapshot).find((p) => p.id === origin.paneId) : undefined;
+  const inheritCwd = origin ? (source?.kind === 'term' ? source.cwd : null) ?? origin.cwd : null;
 
   return (
     <div className="empty-body">
@@ -50,9 +51,9 @@ function EmptyBody({ pane }: { pane: Pane }) {
           ✚ 새 파일
         </button>
       </div>
-      <div className="empty-body__hint" title={inherit?.cwd}>
-        {inherit
-          ? `터미널은 직전 터미널 폴더에서 시작합니다 · ${inherit.cwd}`
+      <div className="empty-body__hint" title={inheritCwd ?? undefined}>
+        {inheritCwd
+          ? `터미널은 나눠 준 터미널의 폴더에서 시작합니다 · ${inheritCwd}`
           : '파일을 이 블럭으로 드래그해도 열립니다'}
       </div>
     </div>

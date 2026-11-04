@@ -103,7 +103,8 @@ export function withSplitTerminal(): Snapshot {
       c: 1,
       cwd: TERM_CWD,
     }),
-    pane(SPLIT_PANE, { r: 2, c: 1 }),
+    // Rust 는 터미널을 나눠 생긴 블럭에 어디서 나왔는지를 적어 둔다.
+    pane(SPLIT_PANE, { r: 2, c: 1, splitFrom: { paneId: TERM_PANE, cwd: TERM_CWD } }),
     pane(EMPTY_PANE, { r: 1, c: 2, rs: 2 }),
   ];
   return snap;
@@ -242,16 +243,26 @@ export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> 
       backend.snapshot = withSplitTerminal();
       return { snapshot: backend.snapshot, newPaneId: SPLIT_PANE };
     case 'pane_open_terminal': {
-      // 물려받기 판정은 Rust 가 셸의 실시간 폴더로 한다. 여기서는 받은 대로 적어 준다.
-      const a = args as { paneId?: string; inherit?: { cwd: string } | null } | undefined;
-      const sessions = backend.snapshot.sessions.map((s) => ({
-        ...s,
-        panes: s.panes.map((p) =>
-          p.id === a?.paneId
-            ? { ...p, kind: 'term' as const, title: 'pwsh · 새 터미널', alive: true, cwd: a?.inherit?.cwd ?? null }
-            : p,
-        ),
-      }));
+      // 물려받기는 Rust 가 나눠 준 터미널의 지금 폴더로 정한다. 여기서는 스냅샷에 적힌 그 터미널의
+      // 폴더를 그대로 쓴다 (셸의 실시간 값은 Rust 테스트가 지킨다).
+      const a = args as { paneId?: string } | undefined;
+      const sessions = backend.snapshot.sessions.map((s) => {
+        const inherited = (id: string | undefined) => {
+          const origin = s.panes.find((p) => p.id === id)?.splitFrom;
+          if (!origin) return null;
+          const source = s.panes.find((p) => p.id === origin.paneId && p.kind === 'term');
+          return source?.cwd ?? origin.cwd ?? null;
+        };
+        const cwd = inherited(a?.paneId);
+        return {
+          ...s,
+          panes: s.panes.map((p) =>
+            p.id === a?.paneId
+              ? { ...p, kind: 'term' as const, title: 'pwsh · 새 터미널', alive: true, cwd, splitFrom: null }
+              : p,
+          ),
+        };
+      });
       backend.snapshot = { ...backend.snapshot, sessions };
       return backend.snapshot;
     }

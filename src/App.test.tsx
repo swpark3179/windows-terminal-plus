@@ -88,7 +88,6 @@ function resetStore() {
     newFile: null,
     newSession: false,
     settings: false,
-    pendingCwd: null,
     toast: null,
     fileDrop: false,
     confirm: null,
@@ -350,35 +349,34 @@ describe('나눈 자리에서 여는 터미널', () => {
   const openTerminalThere = () =>
     fireEvent.click(within(paneEl(SPLIT_PANE)).getByText('▮ 터미널 열기'));
 
-  const sentInherit = () => backend.lastArgs('pane_open_terminal')?.inherit;
+  const hint = () => within(paneEl(SPLIT_PANE)).queryByText(/터미널은 나눠 준 터미널의 폴더에서 시작합니다/);
 
-  it('곧바로 열면 나눠 준 터미널과 같은 폴더에서 시작한다', async () => {
+  it('나눠 준 터미널의 폴더에서 시작하고, 무엇이 일어날지 미리 알려 준다', async () => {
     await splitTheTerminal();
 
-    // 무엇이 일어날지 빈 블럭이 먼저 알려 준다.
-    expect(within(paneEl(SPLIT_PANE)).getByText(`터미널은 직전 터미널 폴더에서 시작합니다 · ${TERM_CWD}`))
-      .toBeInTheDocument();
+    expect(hint()).toHaveTextContent(`터미널은 나눠 준 터미널의 폴더에서 시작합니다 · ${TERM_CWD}`);
 
     openTerminalThere();
 
-    await waitFor(() => expect(sentInherit()).toEqual({ sourcePaneId: TERM_PANE, cwd: TERM_CWD }));
-    expect(await screen.findByText(`직전 터미널 폴더에서 시작 · ${TERM_CWD}`)).toBeInTheDocument();
+    // 어느 폴더에서 뜰지는 Rust 가 정한다 — 화면은 어느 블럭인지만 보낸다.
+    await waitFor(() =>
+      expect(backend.lastArgs('pane_open_terminal')).toEqual({ sessionId: 'ses_test', paneId: SPLIT_PANE }),
+    );
+    expect(await screen.findByText(`나눠 준 터미널 폴더에서 시작 · ${TERM_CWD}`)).toBeInTheDocument();
   });
 
-  it('그 사이 파일을 열었으면 세션에 적힌 폴더에서 시작한다', async () => {
+  it('그 사이 다른 일이 있어도 잊지 않는다 — 기억은 스냅샷에 있다', async () => {
     await splitTheTerminal();
 
-    // 다른 블럭에 파일을 여는 것도 "다른 이벤트" 다 — 스냅샷이 갈리면 기억은 끝난다.
-    await act(async () => {
-      await useStore.getState().openFile(EMPTY_PANE, 'C:/work/rterm/README.md');
-    });
-    openTerminalThere();
+    // 경계를 끌어 크기를 바꾸는 것처럼 스냅샷이 갈아 끼워지는 일. 예전에는 여기서 잊었다.
+    act(() => useStore.getState().apply(structuredClone(backend.snapshot)));
+    expect(hint()).toBeInTheDocument();
 
-    await waitFor(() => expect(backend.calls.filter((c) => c === 'pane_open_terminal')).toHaveLength(1));
-    expect(sentInherit()).toBeNull();
+    openTerminalThere();
+    expect(await screen.findByText(`나눠 준 터미널 폴더에서 시작 · ${TERM_CWD}`)).toBeInTheDocument();
   });
 
-  it('나눠 준 터미널이 그새 폴더를 옮겼으면 물려받지 않는다', async () => {
+  it('나눠 준 터미널이 그새 폴더를 옮겼으면 바뀐 폴더에서 시작한다', async () => {
     await splitTheTerminal();
 
     // 셸이 알려 준 새 폴더가 스냅샷에 실려 온다 (`cd` 뒤의 갱신).
@@ -386,11 +384,17 @@ describe('나눈 자리에서 여는 터미널', () => {
     moved.sessions[0].panes[0].cwd = 'C:/work/rterm/docs';
     backend.snapshot = moved;
     act(() => useStore.setState({ snapshot: moved }));
+    expect(hint()).toHaveTextContent('C:/work/rterm/docs');
 
     openTerminalThere();
 
-    await waitFor(() => expect(backend.calls).toContain('pane_open_terminal'));
-    expect(sentInherit()).toBeNull();
+    expect(await screen.findByText('나눠 준 터미널 폴더에서 시작 · C:/work/rterm/docs')).toBeInTheDocument();
+  });
+
+  it('터미널을 나눈 블럭이 아니면 아무것도 약속하지 않는다', async () => {
+    render(<App />);
+    await waitForBoot();
+    expect(within(paneEl(EMPTY_PANE)).getByText('파일을 이 블럭으로 드래그해도 열립니다')).toBeInTheDocument();
   });
 });
 

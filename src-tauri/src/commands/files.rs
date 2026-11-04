@@ -486,6 +486,7 @@ pub fn pane_create_file(
             return Err("빈 블럭에만 열 수 있습니다".into());
         }
         pane.kind = if md { PaneKind::Md } else { PaneKind::Text };
+        pane.split_from = None;
         pane.title = title.clone();
         pane.path = Some(full.clone());
         pane.content = Some(if md { body.clone() } else { text_to_html(&body) });
@@ -525,6 +526,7 @@ pub fn pane_open_file(
                 return Err("빈 블럭에만 열 수 있습니다".into());
             }
             pane.kind = PaneKind::Image;
+            pane.split_from = None;
             pane.title = name;
             pane.path = Some(path.clone());
             pane.content = None;
@@ -549,6 +551,8 @@ pub fn pane_open_file(
         } else {
             PaneKind::Text
         };
+        // 다른 용도로 쓰인 블럭은 더 이상 "나눠 준 터미널 옆자리" 가 아니다.
+        pane.split_from = None;
         pane.title = doc.name.clone();
         pane.path = Some(doc.path.clone());
         pane.content = Some(doc.content.clone());
