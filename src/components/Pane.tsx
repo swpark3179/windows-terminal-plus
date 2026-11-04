@@ -87,6 +87,8 @@ export function PaneView({
 
   const inMerge = !!mergeSet?.includes(pane.id);
   const marked = inMerge || (editMode && sel === pane.id);
+  // 평소 모드의 "고른 창" — 저장·확대·전체화면이 이 창에 작동한다. 창이 하나뿐이면 표시할 이유가 없다.
+  const selected = !editMode && !full && sel === pane.id && session.panes.length > 1;
   const dimmed = dragMerge && !!mergeSet && !inMerge;
   const isEmpty = pane.kind === 'empty';
   const dark = pane.kind === 'term';
@@ -112,6 +114,7 @@ export function PaneView({
         'pane',
         isEmpty ? 'pane--empty' : '',
         marked ? 'pane--marked' : '',
+        selected ? 'pane--selected' : '',
         dimmed ? 'pane--dimmed' : '',
         full ? 'pane--full' : '',
       ]

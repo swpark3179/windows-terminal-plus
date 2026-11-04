@@ -521,6 +521,30 @@ describe('병합 드래그', () => {
   });
 });
 
+describe('고른 창 표시', () => {
+  const selected = () => Array.from(document.querySelectorAll('.pane--selected'));
+
+  it('평소 모드에서 고른 창에 표시가 붙는다 — 저장·확대·전체화면이 그 창에 작동한다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.mouseDown(paneEl(TERM_PANE));
+
+    expect(selected()).toEqual([paneEl(TERM_PANE)]);
+  });
+
+  it('편집 모드에서는 편집 표시(pane--marked)에 자리를 내준다', async () => {
+    render(<App />);
+    await waitForBoot();
+    act(() => {
+      useStore.setState({ editMode: true, sel: TERM_PANE });
+    });
+
+    expect(selected()).toEqual([]);
+    expect(paneEl(TERM_PANE)).toHaveClass('pane--marked');
+  });
+});
+
 describe('분할', () => {
   it('편집 툴바의 분할 버튼은 선택한 창에 대해 동작한다', async () => {
     render(<App />);
@@ -824,7 +848,25 @@ describe('창 경계 크기 조절', () => {
     const sent = backend.lastArgs('layout_set_weights');
     expect(sent?.axis).toBe('col');
     expect((sent?.weights as number[])[0]).toBeCloseTo(1.2);
-    expect(useStore.getState().resizeDraft).toBeNull();
+    await waitFor(() => expect(useStore.getState().resizeDraft).toBeNull());
+  });
+
+  it('놓은 뒤 저장이 돌아오기 전에는 끈 크기를 그대로 둔다 — 한 프레임 되돌아가지 않게', async () => {
+    render(<App />);
+    await waitForBoot();
+    act(() => {
+      useStore.setState({ editMode: true });
+    });
+    const grid = stubGridWidth(1008);
+
+    fireEvent.mouseDown(document.querySelector('.resize-handle--col')!, { clientX: 500 });
+    fireEvent.mouseMove(window, { clientX: 600 });
+    fireEvent.mouseUp(window);
+
+    // 놓은 그 순간 — 아직 Rust 의 답이 오지 않았다. 예전에는 여기서 초안을 걷어 옛 크기로 튀었다.
+    expect(useStore.getState().resizeDraft).not.toBeNull();
+    expect(grid.style.gridTemplateColumns).toContain('1.2fr');
+    await waitFor(() => expect(useStore.getState().resizeDraft).toBeNull());
   });
 
   it('경계를 끝까지 밀어도 반대쪽 창이 사라지지 않는다', async () => {

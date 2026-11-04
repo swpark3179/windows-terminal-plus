@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useExitMotion } from '../lib/motion';
 import { terminalClipboard } from '../lib/terminalRegistry';
 import { activeSession, useStore } from '../state/store';
 
@@ -31,7 +32,8 @@ export function ContextMenu() {
   const toggleFull = useStore((s) => s.toggleFull);
   const savePane = useStore((s) => s.savePane);
   const revealCwd = useStore((s) => s.revealCwd);
-  const boxRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const exitRef = useExitMotion(boxRef);
 
   // 메뉴 밖을 누르면 닫는다.
   useEffect(() => {
@@ -165,7 +167,7 @@ export function ContextMenu() {
   }
 
   return (
-    <div className="menu" ref={boxRef} style={{ left: ctx.x, top: ctx.y }}>
+    <div className="menu" ref={exitRef} style={{ left: ctx.x, top: ctx.y }}>
       <div className="menu__title">{title}</div>
       {items.map((m) => (
         <button

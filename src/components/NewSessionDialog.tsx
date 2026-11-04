@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
+import { useExitMotion } from '../lib/motion';
 
 /**
  * 새 세션 · 이름 묻기.
@@ -12,6 +13,7 @@ import { useStore } from '../state/store';
  */
 export function NewSessionDialog() {
   const open = useStore((s) => s.newSession);
+  const exitRef = useExitMotion<HTMLDivElement>();
   const snapshot = useStore((s) => s.snapshot);
   const home = useStore((s) => s.home);
   const close = useStore((s) => s.closeNewSession);
@@ -45,7 +47,7 @@ export function NewSessionDialog() {
   };
 
   return (
-    <div className="scrim" onMouseDown={close}>
+    <div className="scrim" ref={exitRef} onMouseDown={close}>
       <div className="card newsession" onMouseDown={(e) => e.stopPropagation()}>
         <div className="picker__head">
           <div className="picker__title">새 세션</div>

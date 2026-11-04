@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NEW_FILE_KINDS, nameProblem, previewName } from '../lib/newFile';
 import { activeSession, useStore } from '../state/store';
 import type { NewFileKind } from '../state/types';
+import { useExitMotion } from '../lib/motion';
 
 /**
  * 빈 블럭에서 새 파일 만들기.
@@ -12,6 +13,7 @@ import type { NewFileKind } from '../state/types';
  */
 export function NewFileDialog() {
   const newFile = useStore((s) => s.newFile);
+  const exitRef = useExitMotion<HTMLDivElement>();
   const snapshot = useStore((s) => s.snapshot);
   const close = useStore((s) => s.closeNewFile);
   const createFile = useStore((s) => s.createFile);
@@ -47,7 +49,7 @@ export function NewFileDialog() {
   };
 
   return (
-    <div className="scrim" onMouseDown={close}>
+    <div className="scrim" ref={exitRef} onMouseDown={close}>
       <div className="card newfile" onMouseDown={(e) => e.stopPropagation()}>
         <div className="picker__head">
           <div className="picker__title">새 파일 만들기</div>

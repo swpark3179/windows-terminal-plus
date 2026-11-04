@@ -53,11 +53,20 @@ export function ResizeHandles({ session, gridRef }: { session: Session; gridRef:
       const current = dragRef.current;
       const draft = useStore.getState().resizeDraft;
       setDrag(null);
-      setResizeDraft(null);
-      if (!current || !draft) return;
+      if (!current || !draft) {
+        setResizeDraft(null);
+        return;
+      }
+      // 초안은 Rust 가 기록한 스냅샷이 **들어온 뒤에** 걷는다. 먼저 걷으면 응답이 오기 전 한 프레임
+      // 동안 격자가 옛 크기로 돌아갔다가 새 크기로 다시 튀었다. 그새 다음 드래그가 시작됐으면 그
+      // 초안은 그 드래그의 것이라 건드리지 않는다.
+      const settle = () => {
+        if (useStore.getState().resizeDraft === draft) setResizeDraft(null);
+      };
       setTrackWeights(session.id, draft.axis, draft.weights)
         .then(apply)
-        .catch((e: unknown) => flash(typeof e === 'string' ? e : '크기를 바꿀 수 없습니다'));
+        .catch((e: unknown) => flash(typeof e === 'string' ? e : '크기를 바꿀 수 없습니다'))
+        .finally(settle);
     };
 
     window.addEventListener('mousemove', onMove);

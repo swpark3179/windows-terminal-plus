@@ -68,6 +68,8 @@ interface AppState {
   newSession: boolean;
   settings: boolean;
   toast: string | null;
+  /** 토스트가 뜰 때마다 하나씩 는다 — 같은 글이 연달아 와도 새로 떴다는 것을 보여 주려고. */
+  toastSeq: number;
   /** OS 에서 파일을 끌어오는 중. */
   fileDrop: boolean;
   /** 저장 · 버리고 진행 · 취소를 묻는 중. */
@@ -201,6 +203,7 @@ export const useStore = create<AppState>((set, get) => ({
   newSession: false,
   settings: false,
   toast: null,
+  toastSeq: 0,
   fileDrop: false,
   confirm: null,
   resizeDraft: null,
@@ -245,7 +248,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   flash: (message) => {
     clearTimeout(toastTimer);
-    set({ toast: message });
+    set((s) => ({ toast: message, toastSeq: s.toastSeq + 1 }));
     toastTimer = setTimeout(() => set({ toast: null }), 2600);
   },
 

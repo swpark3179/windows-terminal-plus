@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../state/store';
+import { useExitMotion } from '../lib/motion';
 
 /**
  * 저장 · 버리고 진행 · 취소 3지선다.
@@ -7,6 +8,7 @@ import { useStore } from '../state/store';
  */
 export function ConfirmDialog() {
   const request = useStore((s) => s.confirm);
+  const exitRef = useExitMotion<HTMLDivElement>();
   const setConfirm = useStore((s) => s.setConfirm);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
@@ -36,7 +38,7 @@ export function ConfirmDialog() {
   };
 
   return (
-    <div className="scrim scrim--confirm">
+    <div className="scrim scrim--confirm" ref={exitRef}>
       <div className="card confirm" role="alertdialog" aria-modal="true">
         <div className="confirm__body">
           <div className="confirm__mark">●</div>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { activeSession, useStore } from '../state/store';
+import { useExitMotion } from '../lib/motion';
 
 interface Action {
   icon: string;
@@ -11,6 +12,7 @@ interface Action {
 /** Ctrl+Shift+P — 디자인의 액션 목록 + 세션 이동. */
 export function CommandPalette() {
   const open = useStore((s) => s.palette);
+  const exitRef = useExitMotion<HTMLDivElement>();
   const query = useStore((s) => s.paletteQuery);
   const sel = useStore((s) => s.paletteSel);
   const snapshot = useStore((s) => s.snapshot);
@@ -96,7 +98,7 @@ export function CommandPalette() {
   };
 
   return (
-    <div className="scrim scrim--top" onMouseDown={() => store.closePalette()}>
+    <div className="scrim scrim--top" ref={exitRef} onMouseDown={() => store.closePalette()}>
       <div className="card palette" onMouseDown={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
