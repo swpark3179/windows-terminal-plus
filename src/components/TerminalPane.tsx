@@ -369,6 +369,49 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       frame = requestAnimationFrame(flushQueue);
     };
 
+    /**
+     * xterm 의 스크롤 영역을 버퍼에 다시 맞춘다 — **보던 자리는 그대로 둔 채.**
+     *
+     * xterm 의 휠은 `.xterm-viewport` 의 DOM `scrollTop` 을 움직이고, 그 스크롤 영역의 높이는
+     * `Viewport.syncScrollArea()` 가 맞춘다(xterm 5.5 `browser/Viewport.ts`). 그런데 그 동기화는 버퍼가
+     * **스크롤될 때**(onScroll)와 치수가 바뀔 때만 불린다. 복원은 수천 줄을 부팅 직후 — 레이아웃과
+     * 글꼴이 자리 잡기 전 — 에 한꺼번에 쓰고, 그 뒤 셸 프롬프트는 화면 안에서만 그려져 onScroll 이
+     * 다시 오지 않는다. 그러면 낡은 높이가 남아 **휠이 먹지 않는다.** PageUp/PageDown 을 누르면
+     * 살아나던 것은 그 키가 셸로 가 ConPTY 가 화면을 다시 그리고, 그 출력이 우연히 동기화를 일으켰기
+     * 때문이다. 같은 일을 여기서 일부러 한다.
+     *
+     * 한 줄 올렸다 내리는(맨 위면 내렸다 올리는) 왕복이라 `ydisp` 와 "사용자가 올려 둔" 상태는 제자리로
+     * 돌아오고 onScroll 만 두 번 난다. 그래서 위로 올려 읽던 중에 불려도 바닥으로 끌려가지 않는다.
+     */
+    let resyncFrame = 0;
+    const resyncViewport = () => {
+      if (disposed || resyncFrame) return;
+      resyncFrame = requestAnimationFrame(() => {
+        resyncFrame = 0;
+        if (disposed) return;
+        if (host.clientWidth > 0 && host.clientHeight > 0) {
+          try {
+            fit.fit();
+          } catch {
+            // 치수를 못 재는 순간이면 다음 계기(ResizeObserver)가 맞춘다.
+          }
+        }
+        const buf = term.buffer.active;
+        if (buf.type !== 'normal' || buf.baseY <= 0) return;
+        const dir = buf.viewportY > 0 ? -1 : 1;
+        term.scrollLines(dir);
+        term.scrollLines(-dir);
+      });
+    };
+
+    // 글꼴(Cascadia Mono·Noto)은 처음 쓰일 때 내려받는다 — 다 오면 칸 치수가 달라질 수 있다.
+    void document.fonts?.ready?.then(resyncViewport);
+    // 창이 가려졌다 돌아오면(최소화·잠금 해제) 그사이 쌓인 출력으로 영역이 낡았을 수 있다.
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') resyncViewport();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
     const channel = new Channel<ArrayBuffer>();
     channel.onmessage = (buf) => {
       queue.push(new Uint8Array(buf));
@@ -381,9 +424,10 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
         // 새로 띄운 셸이면 앞선 셸의 제목을 물려받지 않는다 (다시 붙은 것이면 그대로 둔다 —
         // 재생되는 스크롤백에는 OSC 가 없어서 그 제목이 유일하게 남은 정보다).
         if (!res.attached) useStore.getState().clearLiveTitle(pane.id);
-        // 이전 화면을 먼저 되살리고, 배너로 과거와 현재를 가른다.
-        if (res.restored) term.write(res.restored);
-        if (res.banner) term.write(res.banner);
+        // 이전 화면을 먼저 되살리고, 배너로 과거와 현재를 가른다. 다 읽힌 뒤에(콜백) 스크롤 영역을
+        // 다시 맞춘다 — 그러지 않으면 복원 직후 휠이 먹지 않는다(`resyncViewport`).
+        const replay = res.restored + res.banner;
+        if (replay) term.write(replay, resyncViewport);
         restoreDone = true;
         schedule();
         void refresh();
@@ -397,17 +441,27 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
 
     // 패널 크기가 바뀌면 ConPTY 에도 알려야 프롬프트 폭이 따라온다.
     let resizeFrame = 0;
+    /** 크기가 0 이던(가려진) 동안에는 xterm 이 스크롤 영역을 바르게 잴 수 없다. */
+    let wasHidden = false;
     const observer = new ResizeObserver(() => {
       if (resizeFrame) return;
       resizeFrame = requestAnimationFrame(() => {
         resizeFrame = 0;
-        if (disposed || host.clientWidth === 0 || host.clientHeight === 0) return;
+        if (disposed) return;
+        if (host.clientWidth === 0 || host.clientHeight === 0) {
+          wasHidden = true;
+          return;
+        }
         try {
           fit.fit();
         } catch {
           return;
         }
         void resizePty(pane.id, term.cols, term.rows).catch(() => {});
+        if (wasHidden) {
+          wasHidden = false;
+          resyncViewport();
+        }
       });
     });
     observer.observe(host);
@@ -425,6 +479,8 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       disposed = true;
       cancelAnimationFrame(frame);
       cancelAnimationFrame(resizeFrame);
+      cancelAnimationFrame(resyncFrame);
+      document.removeEventListener('visibilitychange', onVisibility);
       observer.disconnect();
       dataSub.dispose();
       binarySub.dispose();

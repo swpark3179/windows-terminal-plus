@@ -221,6 +221,10 @@ pub fn pty_open(
     on_data: Channel<Response>,
 ) -> Result<SpawnResult, String> {
     // 1) 재연결 — 살아 있는 셸이 있으면 화면만 다시 붙인다.
+    //
+    // 화면 속 프로그램이 그대로 살아 있으므로 글자만이 아니라 **상태**까지 옮긴다 — 대체 화면·
+    // 마우스 보고·커서 자리(`serialize_for_attach`). 그러지 않으면 claude 가 도는 창을 다녀왔을 때
+    // 새 xterm 이 일반 버퍼라 휠이 claude 로 가지 않는다.
     {
         let terms = state.terminals.lock();
         if let Some(slot) = terms.get(&pane_id) {
@@ -228,7 +232,7 @@ pub fn pty_open(
                 *slot.sink.lock() = Some(on_data);
                 let mut core = slot.core.lock();
                 core.resize(cols as usize, rows as usize);
-                let restored = core.serialize_scrollback(SCROLLBACK_LINES);
+                let restored = core.serialize_for_attach(SCROLLBACK_LINES);
                 drop(core);
                 let _ = slot.pty.resize(cols, rows);
                 return Ok(SpawnResult {

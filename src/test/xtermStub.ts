@@ -101,8 +101,10 @@ export class StubTerminal {
   loadAddon() {}
   open() {}
 
-  write(data: string | Uint8Array) {
+  write(data: string | Uint8Array, callback?: () => void) {
     this.written.push(typeof data === 'string' ? data : new TextDecoder().decode(data));
+    // 실제 xterm 은 쓰기를 시간을 나눠 파싱하고 **다 읽은 뒤** 콜백을 부른다.
+    if (callback) queueMicrotask(callback);
   }
 
   dispose() {}

@@ -863,3 +863,70 @@ describe('스크롤 막대', () => {
     expect(track(plain.view)).not.toHaveClass('term-scrollbar--pinned');
   });
 });
+
+/**
+ * 복원 직후 휠이 먹지 않던 문제.
+ *
+ * xterm 의 스크롤 영역은 버퍼가 **스크롤될 때**만 다시 잰다. 복원은 수천 줄을 한꺼번에 쓰고 그 뒤
+ * 프롬프트는 화면 안에서만 그려지므로, 우리가 한 번 일부러 스크롤을 일으켜 주어야 한다 — 단 보던
+ * 자리는 그대로 두고.
+ */
+describe('복원 직후 스크롤 영역', () => {
+  afterEach(() => {
+    backend.spawn = { restored: '', banner: '', attached: false };
+  });
+
+  const nextFrame = () =>
+    act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+
+  /** 스크롤백이 쌓인 채 복원되는 터미널. `viewportY` 는 지금 보는 자리. */
+  async function mountRestored(baseY: number, viewportY = baseY) {
+    backend.spawn = { restored: 'old line\r\n'.repeat(3), banner: '복원\r\n', attached: false };
+    const { term, view } = mount();
+    term.buffer.active.baseY = baseY;
+    term.buffer.active.viewportY = viewportY;
+    await waitFor(() => expect(term.written).toContain(backend.spawn.restored + backend.spawn.banner));
+    await nextFrame();
+    await nextFrame();
+    return { term, view };
+  }
+
+  it('복원 내용을 다 쓴 뒤 한 줄 왕복 스크롤로 xterm 이 영역을 다시 재게 한다', async () => {
+    const { term } = await mountRestored(200);
+    // 바닥에 있었으면 위로 한 줄, 다시 아래로 한 줄 — 제자리로 돌아온다.
+    expect(term.scrolledLines).toEqual([-1, 1]);
+    expect(term.scrolledToBottom).toBe(0);
+  });
+
+  it('맨 위를 보고 있었다면 아래로 갔다 돌아온다 — 보던 자리를 잃지 않는다', async () => {
+    const { term } = await mountRestored(200, 0);
+    expect(term.scrolledLines).toEqual([1, -1]);
+  });
+
+  it('스크롤백이 없으면 아무것도 굴리지 않는다', async () => {
+    const { term } = await mountRestored(0);
+    expect(term.scrolledLines).toEqual([]);
+  });
+
+  it('대체 화면에서는 굴리지 않는다 — 거기에는 xterm 스크롤백이 없다', async () => {
+    backend.spawn = { restored: 'frame', banner: '', attached: true };
+    const { term } = mount();
+    term.buffer.active.type = 'alternate';
+    term.buffer.active.baseY = 0;
+    await waitFor(() => expect(term.written).toContain('frame'));
+    await nextFrame();
+    expect(term.scrolledLines).toEqual([]);
+  });
+
+  it('창이 다시 보이면 한 번 더 맞춘다', async () => {
+    const { term } = await mountRestored(50);
+    term.scrolledLines.length = 0;
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await nextFrame();
+    expect(term.scrolledLines).toEqual([-1, 1]);
+  });
+});

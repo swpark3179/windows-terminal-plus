@@ -215,38 +215,116 @@ impl TermCore {
 
         let mut out = String::new();
         for i in first..=last {
-            let row = &grid[Line(i)];
-            // 줄 끝 공백은 잘라 낸다.
-            let mut width = 0usize;
-            for c in 0..grid.columns() {
-                let cell = &row[Column(c)];
-                if cell.c != ' ' && cell.c != '\0' {
-                    width = c + 1;
-                }
-            }
-
-            // 기본 서식으로 시작한다고 보면, 평범한 줄에는 SGR 을 한 글자도 넣지 않는다.
-            let mut style = DEFAULT_STYLE;
-            for c in 0..width {
-                let cell = &row[Column(c)];
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-                // WIDE_CHAR 처럼 서식과 무관한 플래그는 비교에서 뺀다.
-                let want = (cell.fg, cell.bg, cell.flags & STYLE_MASK);
-                if style != want {
-                    out.push_str(&sgr_for(want.0, want.1, want.2));
-                    style = want;
-                }
-                out.push(if cell.c == '\0' { ' ' } else { cell.c });
-            }
-            if style != DEFAULT_STYLE {
-                out.push_str("\u{1b}[0m");
-            }
+            self.encode_row(i, &mut out);
             out.push_str("\r\n");
         }
         out
     }
+
+    /// 살아 있는 셸에 화면을 **다시 붙일 때** 쓸 직렬화 — 새 xterm 이 지금과 같은 상태가 되게 한다.
+    ///
+    /// 스냅샷용 `serialize_scrollback` 은 글자와 서식만 담는다. 앱을 다시 켤 때는 그것이 맞다 —
+    /// 그 화면의 프로그램은 이미 죽었으니 모드를 되살릴 이유가 없다. 하지만 세션을 다녀오거나
+    /// 전체화면을 풀어 xterm 만 새로 생긴 경우에는 **프로그램이 그대로 살아 있다.** 그때 글자만 다시
+    /// 그리면 세 가지가 어긋난다.
+    ///
+    /// 1. **대체 화면** — `claude`·`codex`·`vim` 은 대체 화면에 있는데 새 xterm 은 일반 버퍼라,
+    ///    휠이 프로그램으로 가지 않고 xterm 자기 버퍼를 굴린다(스크롤이 "죽는" 증상).
+    /// 2. **마우스 보고·괄호 붙여넣기·커서 키 모드** — 프로그램이 켜 둔 것을 새 xterm 은 모른다.
+    /// 3. **커서 자리** — 뒤쪽 빈 줄을 버리면 xterm 의 화면이 위로 밀려, 절대 좌표로 그리는
+    ///    ConPTY 의 다음 출력이 엉뚱한 줄을 덮는다.
+    ///
+    /// 그래서 화면 줄은 빈 줄까지 **그대로** 싣고(마지막 줄 뒤에는 줄바꿈을 넣지 않는다 — 넣으면
+    /// 대체 화면이 한 줄 밀린다), 대체 화면이면 그 진입을 맨 앞에, 커서 자리와 나머지 모드를 맨 뒤에 둔다.
+    /// 대체 화면에는 히스토리가 없으므로 그때는 화면만 실린다.
+    pub fn serialize_for_attach(&self, max_lines: usize) -> String {
+        let mode = *self.term.mode();
+        let grid = self.term.grid();
+        let top = grid.topmost_line().0;
+        let bottom = grid.bottommost_line().0;
+        let budget = max_lines.max(grid.screen_lines()) as i32;
+        let first = top.max(bottom - budget + 1);
+
+        let mut out = String::new();
+        if mode.contains(TermMode::ALT_SCREEN) {
+            out.push_str("\u{1b}[?1049h\u{1b}[H");
+        }
+        for i in first..=bottom {
+            if i > first {
+                out.push_str("\r\n");
+            }
+            self.encode_row(i, &mut out);
+        }
+
+        let cursor = grid.cursor.point;
+        out.push_str(&format!(
+            "\u{1b}[{};{}H",
+            cursor.line.0.max(0) + 1,
+            cursor.column.0 + 1
+        ));
+        out.push_str(&mode_suffix(mode));
+        out
+    }
+
+    /// 한 줄을 SGR + 글자로 옮긴다. 줄 끝의 서식 없는 공백은 버린다.
+    fn encode_row(&self, line: i32, out: &mut String) {
+        let grid = self.term.grid();
+        let row = &grid[Line(line)];
+        // 줄 끝 공백은 잘라 낸다 — 단 배경색·반전처럼 **보이는** 서식이 붙은 칸은 남긴다
+        // (프로그램이 칠해 둔 입력창 띠가 재연결 때 사라지지 않게).
+        let mut width = 0usize;
+        for c in 0..grid.columns() {
+            let cell = &row[Column(c)];
+            let visible_style = cell.bg != Color::Named(NamedColor::Background)
+                || cell.flags.intersects(Flags::INVERSE | Flags::ALL_UNDERLINES | Flags::STRIKEOUT);
+            if (cell.c != ' ' && cell.c != '\0') || visible_style {
+                width = c + 1;
+            }
+        }
+
+        // 기본 서식으로 시작한다고 보면, 평범한 줄에는 SGR 을 한 글자도 넣지 않는다.
+        let mut style = DEFAULT_STYLE;
+        for c in 0..width {
+            let cell = &row[Column(c)];
+            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+            // WIDE_CHAR 처럼 서식과 무관한 플래그는 비교에서 뺀다.
+            let want = (cell.fg, cell.bg, cell.flags & STYLE_MASK);
+            if style != want {
+                out.push_str(&sgr_for(want.0, want.1, want.2));
+                style = want;
+            }
+            out.push(if cell.c == '\0' { ' ' } else { cell.c });
+        }
+        if style != DEFAULT_STYLE {
+            out.push_str("\u{1b}[0m");
+        }
+    }
+}
+
+/// 프로그램이 켜 둔 입력 모드를 시퀀스로 되살린다 (대체 화면은 본문 앞에서 따로 다룬다).
+///
+/// 마우스 보고는 alacritty 가 셋 중 하나만 켜 두므로(`?1000`·`?1002`·`?1003` 은 서로를 끈다)
+/// 그대로 옮기면 된다. 기본값과 같은 것(커서 보임 등)은 보내지 않는다 — 새 xterm 이 이미 그 상태다.
+fn mode_suffix(mode: TermMode) -> String {
+    let mut out = String::new();
+    let mut set = |on: bool, seq: &str| {
+        if on {
+            out.push_str(seq);
+        }
+    };
+    set(mode.contains(TermMode::APP_CURSOR), "\u{1b}[?1h");
+    set(mode.contains(TermMode::APP_KEYPAD), "\u{1b}=");
+    set(mode.contains(TermMode::MOUSE_REPORT_CLICK), "\u{1b}[?1000h");
+    set(mode.contains(TermMode::MOUSE_DRAG), "\u{1b}[?1002h");
+    set(mode.contains(TermMode::MOUSE_MOTION), "\u{1b}[?1003h");
+    set(mode.contains(TermMode::UTF8_MOUSE), "\u{1b}[?1005h");
+    set(mode.contains(TermMode::SGR_MOUSE), "\u{1b}[?1006h");
+    set(mode.contains(TermMode::FOCUS_IN_OUT), "\u{1b}[?1004h");
+    set(mode.contains(TermMode::BRACKETED_PASTE), "\u{1b}[?2004h");
+    set(!mode.contains(TermMode::SHOW_CURSOR), "\u{1b}[?25l");
+    out
 }
 
 /// 실제로 SGR 로 표현되는 플래그만 추린 마스크. WIDE_CHAR·WRAPLINE 등은 서식이 아니다.
@@ -467,6 +545,87 @@ mod tests {
         t.feed(b"\x1b]52;c;aGk=\x07hello");
         assert!(t.take_shell_events().is_empty());
         assert!(t.plain_lines().iter().any(|l| l.contains("hello")));
+    }
+
+    /// 화면에 보이는 줄들 — 재연결 테스트가 "같은 화면인가" 를 볼 때 쓴다.
+    fn screen(t: &TermCore) -> Vec<String> {
+        let all = t.plain_lines();
+        all[all.len() - t.size().screen_lines..].to_vec()
+    }
+
+    fn cursor(t: &TermCore) -> (i32, usize) {
+        let p = t.term.grid().cursor.point;
+        (p.line.0, p.column.0)
+    }
+
+    #[test]
+    fn attach_reproduces_the_screen_and_the_cursor() {
+        // 히스토리가 쌓인 뒤 화면을 지우고 맨 위에 프롬프트가 선 상태 — 뒤쪽 빈 줄을 버리던
+        // 스냅샷 직렬화로는 새 xterm 의 화면이 밀려 커서가 다른 줄에 선다.
+        let mut t = core();
+        for i in 0..10 {
+            t.feed(format!("old {i}\r\n").as_bytes());
+        }
+        t.feed(b"\x1b[H\x1b[2JPS C:\\> ");
+        let dump = t.serialize_for_attach(100);
+
+        let mut fresh = core();
+        fresh.feed(dump.as_bytes());
+        assert_eq!(screen(&fresh), screen(&t), "화면이 같아야 한다: {dump:?}");
+        assert_eq!(cursor(&fresh), cursor(&t), "커서도 같은 자리여야 한다");
+        assert!(!dump.contains("?1049h"), "일반 화면에서는 대체 화면에 들어가지 않는다");
+    }
+
+    #[test]
+    fn attach_on_the_alternate_screen_enters_it_first() {
+        // claude·codex·vim 이 도는 중에 세션을 다녀온 경우. 새 xterm 도 대체 화면이어야 휠이
+        // 프로그램으로 간다.
+        let mut t = core();
+        t.feed(b"shell history\r\n");
+        t.feed(b"\x1b[?1049h\x1b[Hframe top\x1b[4;1Hframe bottom\x1b[2;3H");
+        let dump = t.serialize_for_attach(100);
+        assert!(dump.starts_with("\x1b[?1049h"), "대체 화면 진입이 맨 앞에: {dump:?}");
+
+        let mut fresh = core();
+        fresh.feed(dump.as_bytes());
+        assert!(fresh.on_alternate_screen());
+        assert_eq!(screen(&fresh), screen(&t), "마지막 줄 뒤 줄바꿈으로 화면이 밀리면 안 된다");
+        assert_eq!(cursor(&fresh), (1, 2));
+    }
+
+    #[test]
+    fn attach_restores_the_input_modes_the_program_turned_on() {
+        let mut t = core();
+        t.feed(b"\x1b[?1049h\x1b[?1002h\x1b[?1006h\x1b[?2004h\x1b[?1h\x1b[?1004h\x1b[?25l");
+        let dump = t.serialize_for_attach(100);
+
+        let mut fresh = core();
+        fresh.feed(dump.as_bytes());
+        let want = TermMode::ALT_SCREEN
+            | TermMode::MOUSE_DRAG
+            | TermMode::SGR_MOUSE
+            | TermMode::BRACKETED_PASTE
+            | TermMode::APP_CURSOR
+            | TermMode::FOCUS_IN_OUT;
+        assert!(fresh.term.mode().contains(want), "모드가 되살아나야 한다: {dump:?}");
+        assert!(!fresh.term.mode().contains(TermMode::SHOW_CURSOR), "숨긴 커서도 그대로");
+    }
+
+    #[test]
+    fn attach_of_a_plain_shell_sends_no_modes() {
+        let mut t = core();
+        t.feed(b"PS> dir\r\n");
+        let dump = t.serialize_for_attach(100);
+        assert!(!dump.contains("\x1b[?"), "평범한 셸에는 모드를 보내지 않는다: {dump:?}");
+    }
+
+    #[test]
+    fn attach_keeps_a_coloured_band_at_the_end_of_a_line() {
+        // 프로그램이 배경색으로 칠한 입력창 띠 — 글자가 없다고 잘라 내면 재연결 때 사라진다.
+        let mut t = core();
+        t.feed(b"> \x1b[44m      \x1b[0m");
+        let dump = t.serialize_for_attach(100);
+        assert!(dump.contains("44m      "), "칠한 칸이 남아야 한다: {dump:?}");
     }
 
     #[test]

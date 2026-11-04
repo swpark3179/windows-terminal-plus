@@ -159,6 +159,8 @@ export interface Backend {
   mergeError: string | null;
   /** `pane_create_file` 이 거부할 때의 사유 문구. `null` 이면 성공. */
   createFileError: string | null;
+  /** `pty_open` 이 돌려줄 것 — 복원·재연결을 흉내 낼 때 바꾼다. */
+  spawn: { restored: string; banner: string; attached: boolean };
   snapshot: Snapshot;
 }
 
@@ -175,6 +177,7 @@ export const backend: Backend = {
   verdict: { status: 'rejected', reason: 'tooManyPrograms', message: '프로그램이 열린 창은 하나만 병합할 수 있습니다' },
   mergeError: '프로그램이 열린 창은 하나만 병합할 수 있습니다',
   createFileError: null,
+  spawn: { restored: '', banner: '', attached: false },
   snapshot: makeSnapshot(),
 };
 
@@ -193,6 +196,7 @@ export function resetBackend() {
   };
   backend.mergeError = '프로그램이 열린 창은 하나만 병합할 수 있습니다';
   backend.createFileError = null;
+  backend.spawn = { restored: '', banner: '', attached: false };
 }
 
 export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> {
@@ -262,7 +266,7 @@ export async function fakeInvoke(cmd: string, args?: unknown): Promise<unknown> 
       return backend.snapshot;
     }
     case 'pty_open':
-      return { restored: '', banner: '', attached: false };
+      return { ...backend.spawn };
     case 'pane_reveal_cwd':
       // 어느 폴더를 여는지는 Rust 가 정한다 — 여기서는 셸이 알려 준 폴더를 열었다고 답한다.
       return { path: TERM_CWD, source: 'live' };
