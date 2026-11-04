@@ -13,6 +13,7 @@ pub use layout::{
     MergeAxis, MergePlan, MergeReject, MergeVerdict, SplitDir, TrackAxis, MAX_COLS, MAX_ROWS,
 };
 pub use model::{
-    uid, AiKind, EnvVar, Grid, MdMode, Pane, PaneKind, Session, Shell, MIN_TRACK_WEIGHT,
+    uid, AiKind, EnvVar, Grid, MdMode, Pane, PaneKind, Session, Shell, SplitOrigin,
+    MIN_TRACK_WEIGHT,
 };
 pub use snapshot::{Snapshot, SCROLLBACK_LINES, SNAPSHOT_VERSION};

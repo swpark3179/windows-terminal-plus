@@ -728,3 +728,58 @@ fn a_new_session_keeps_the_shell_name_it_was_given() {
     layout::start_full_terminal(&mut s);
     assert_eq!(s.panes[0].title, "wsl · 새 터미널");
 }
+
+#[test]
+fn opening_a_terminal_consumes_the_split_origin() {
+    // 물려받기는 한 번뿐이다 — 연 뒤에는 그 창이 자기 셸이 알려 주는 폴더를 따른다.
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    occupy(&mut s, &a, PaneKind::Term);
+    let b = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+    s.pane_mut(&b).unwrap().split_from = Some(rterm_core::SplitOrigin {
+        pane_id: a.clone(),
+        cwd: Some("C:/work".into()),
+    });
+
+    layout::open_terminal(&mut s, &b, Some("C:/work")).expect("빈 블럭에 열린다");
+
+    assert_eq!(s.pane(&b).unwrap().split_from, None);
+}
+
+#[test]
+fn the_split_origin_travels_with_the_block_when_swapped() {
+    // 교환은 좌표만 맞바꾼다 — 어디서 나왔는지는 그 블럭의 것이다.
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    occupy(&mut s, &a, PaneKind::Term);
+    let b = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+    let origin = rterm_core::SplitOrigin { pane_id: a.clone(), cwd: None };
+    s.pane_mut(&b).unwrap().split_from = Some(origin.clone());
+
+    swap(&mut s, &a, &b).unwrap();
+
+    assert_eq!(s.pane(&b).unwrap().split_from, Some(origin));
+    assert_eq!(s.pane(&a).unwrap().split_from, None);
+}
+
+#[test]
+fn the_split_origin_is_saved_in_camel_case_and_old_snapshots_still_load() {
+    let mut s = session();
+    let a = s.panes[0].id.clone();
+    let b = split(&mut s, &a, SplitDir::LeftRight).unwrap();
+    s.pane_mut(&b).unwrap().split_from = Some(rterm_core::SplitOrigin {
+        pane_id: a.clone(),
+        cwd: Some("C:/work".into()),
+    });
+
+    let json = serde_json::to_string(s.pane(&b).unwrap()).unwrap();
+    assert!(
+        json.contains(&format!(r#""splitFrom":{{"paneId":"{a}","cwd":"C:/work"}}"#)),
+        "프론트엔드가 읽는 모양이어야 한다: {json}"
+    );
+    // 이 필드가 생기기 전의 스냅샷.
+    let old = serde_json::to_string(s.pane(&a).unwrap()).unwrap();
+    assert!(!old.contains("splitFrom"), "없으면 적지 않는다");
+    let back: rterm_core::Pane = serde_json::from_str(&old).unwrap();
+    assert_eq!(back.split_from, None);
+}

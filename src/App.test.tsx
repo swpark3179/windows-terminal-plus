@@ -64,6 +64,7 @@ import {
   TEXT_PANE,
   backend,
   makeDirtySnapshot,
+  makeSnapshot,
   requestWindowClose,
   resetBackend,
   withSplitTerminal,
@@ -88,7 +89,6 @@ function resetStore() {
     newFile: null,
     newSession: false,
     settings: false,
-    pendingCwd: null,
     toast: null,
     fileDrop: false,
     confirm: null,
@@ -350,35 +350,34 @@ describe('나눈 자리에서 여는 터미널', () => {
   const openTerminalThere = () =>
     fireEvent.click(within(paneEl(SPLIT_PANE)).getByText('▮ 터미널 열기'));
 
-  const sentInherit = () => backend.lastArgs('pane_open_terminal')?.inherit;
+  const hint = () => within(paneEl(SPLIT_PANE)).queryByText(/터미널은 나눠 준 터미널의 폴더에서 시작합니다/);
 
-  it('곧바로 열면 나눠 준 터미널과 같은 폴더에서 시작한다', async () => {
+  it('나눠 준 터미널의 폴더에서 시작하고, 무엇이 일어날지 미리 알려 준다', async () => {
     await splitTheTerminal();
 
-    // 무엇이 일어날지 빈 블럭이 먼저 알려 준다.
-    expect(within(paneEl(SPLIT_PANE)).getByText(`터미널은 직전 터미널 폴더에서 시작합니다 · ${TERM_CWD}`))
-      .toBeInTheDocument();
+    expect(hint()).toHaveTextContent(`터미널은 나눠 준 터미널의 폴더에서 시작합니다 · ${TERM_CWD}`);
 
     openTerminalThere();
 
-    await waitFor(() => expect(sentInherit()).toEqual({ sourcePaneId: TERM_PANE, cwd: TERM_CWD }));
-    expect(await screen.findByText(`직전 터미널 폴더에서 시작 · ${TERM_CWD}`)).toBeInTheDocument();
+    // 어느 폴더에서 뜰지는 Rust 가 정한다 — 화면은 어느 블럭인지만 보낸다.
+    await waitFor(() =>
+      expect(backend.lastArgs('pane_open_terminal')).toEqual({ sessionId: 'ses_test', paneId: SPLIT_PANE }),
+    );
+    expect(await screen.findByText(`나눠 준 터미널 폴더에서 시작 · ${TERM_CWD}`)).toBeInTheDocument();
   });
 
-  it('그 사이 파일을 열었으면 세션에 적힌 폴더에서 시작한다', async () => {
+  it('그 사이 다른 일이 있어도 잊지 않는다 — 기억은 스냅샷에 있다', async () => {
     await splitTheTerminal();
 
-    // 다른 블럭에 파일을 여는 것도 "다른 이벤트" 다 — 스냅샷이 갈리면 기억은 끝난다.
-    await act(async () => {
-      await useStore.getState().openFile(EMPTY_PANE, 'C:/work/rterm/README.md');
-    });
-    openTerminalThere();
+    // 경계를 끌어 크기를 바꾸는 것처럼 스냅샷이 갈아 끼워지는 일. 예전에는 여기서 잊었다.
+    act(() => useStore.getState().apply(structuredClone(backend.snapshot)));
+    expect(hint()).toBeInTheDocument();
 
-    await waitFor(() => expect(backend.calls.filter((c) => c === 'pane_open_terminal')).toHaveLength(1));
-    expect(sentInherit()).toBeNull();
+    openTerminalThere();
+    expect(await screen.findByText(`나눠 준 터미널 폴더에서 시작 · ${TERM_CWD}`)).toBeInTheDocument();
   });
 
-  it('나눠 준 터미널이 그새 폴더를 옮겼으면 물려받지 않는다', async () => {
+  it('나눠 준 터미널이 그새 폴더를 옮겼으면 바뀐 폴더에서 시작한다', async () => {
     await splitTheTerminal();
 
     // 셸이 알려 준 새 폴더가 스냅샷에 실려 온다 (`cd` 뒤의 갱신).
@@ -386,11 +385,17 @@ describe('나눈 자리에서 여는 터미널', () => {
     moved.sessions[0].panes[0].cwd = 'C:/work/rterm/docs';
     backend.snapshot = moved;
     act(() => useStore.setState({ snapshot: moved }));
+    expect(hint()).toHaveTextContent('C:/work/rterm/docs');
 
     openTerminalThere();
 
-    await waitFor(() => expect(backend.calls).toContain('pane_open_terminal'));
-    expect(sentInherit()).toBeNull();
+    expect(await screen.findByText('나눠 준 터미널 폴더에서 시작 · C:/work/rterm/docs')).toBeInTheDocument();
+  });
+
+  it('터미널을 나눈 블럭이 아니면 아무것도 약속하지 않는다', async () => {
+    render(<App />);
+    await waitForBoot();
+    expect(within(paneEl(EMPTY_PANE)).getByText('파일을 이 블럭으로 드래그해도 열립니다')).toBeInTheDocument();
   });
 });
 
@@ -517,6 +522,30 @@ describe('병합 드래그', () => {
   });
 });
 
+describe('고른 창 표시', () => {
+  const selected = () => Array.from(document.querySelectorAll('.pane--selected'));
+
+  it('평소 모드에서 고른 창에 표시가 붙는다 — 저장·확대·전체화면이 그 창에 작동한다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.mouseDown(paneEl(TERM_PANE));
+
+    expect(selected()).toEqual([paneEl(TERM_PANE)]);
+  });
+
+  it('편집 모드에서는 편집 표시(pane--marked)에 자리를 내준다', async () => {
+    render(<App />);
+    await waitForBoot();
+    act(() => {
+      useStore.setState({ editMode: true, sel: TERM_PANE });
+    });
+
+    expect(selected()).toEqual([]);
+    expect(paneEl(TERM_PANE)).toHaveClass('pane--marked');
+  });
+});
+
 describe('분할', () => {
   it('편집 툴바의 분할 버튼은 선택한 창에 대해 동작한다', async () => {
     render(<App />);
@@ -556,8 +585,8 @@ describe('전체화면', () => {
 
     fireEvent.click(fullButton());
 
-    // 빈 블럭은 화면에서 빠지고 터미널만 남는다.
-    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeNull());
+    // 빈 블럭은 그 뒤에 숨고 터미널만 보인다 — 지우지 않으므로 돌아오면 그대로 살아 있다.
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toHaveClass('pane--behind'));
     expect(backend.lastArgs('pane_set_full')).toMatchObject({
       sessionId: 'ses_test',
       paneId: TERM_PANE,
@@ -575,11 +604,11 @@ describe('전체화면', () => {
     await waitForBoot();
 
     fireEvent.click(fullButton());
-    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeNull());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toHaveClass('pane--behind'));
 
     fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true });
 
-    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeTruthy());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).not.toHaveClass('pane--behind'));
     expect(backend.lastArgs('pane_set_full')).toMatchObject({ paneId: null });
     expect(document.querySelector('.stage--full')).toBeNull();
   });
@@ -605,14 +634,33 @@ describe('전체화면', () => {
     await waitForBoot();
 
     fireEvent.click(fullButton());
-    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeNull());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toHaveClass('pane--behind'));
 
     // 세션 헤더가 숨어 있어도 단축키는 그대로 듣는다.
     fireEvent.keyDown(window, { key: 'e', ctrlKey: true });
 
     await waitFor(() => expect(backend.lastArgs('pane_set_full')).toMatchObject({ paneId: null }));
-    expect(paneEl(EMPTY_PANE)).toBeTruthy();
+    expect(paneEl(EMPTY_PANE)).not.toHaveClass('pane--behind');
     expect(useStore.getState().editMode).toBe(true);
+  });
+
+  it('뒤에 숨은 터미널은 떼었다 다시 붙지 않는다 — 셸 화면이 그대로 산다', async () => {
+    // 터미널 두 개가 나란히 있는 세션.
+    const two = makeSnapshot();
+    two.sessions[0].panes[1] = { ...two.sessions[0].panes[1], kind: 'term', title: 'pwsh · 새 터미널', alive: true };
+    backend.snapshot = two;
+    render(<App />);
+    await waitForBoot();
+    await waitFor(() => expect(backend.calls.filter((c) => c === 'pty_open')).toHaveLength(2));
+
+    fireEvent.click(fullButton());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toHaveClass('pane--behind'));
+    fireEvent.click(fullButton());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).not.toHaveClass('pane--behind'));
+
+    // 예전에는 전체화면을 오갈 때마다 숨은 터미널이 pty_detach → pty_open 으로 화면을 다시 받았다.
+    expect(backend.calls.filter((c) => c === 'pty_detach')).toHaveLength(0);
+    expect(backend.calls.filter((c) => c === 'pty_open')).toHaveLength(2);
   });
 });
 
@@ -820,7 +868,25 @@ describe('창 경계 크기 조절', () => {
     const sent = backend.lastArgs('layout_set_weights');
     expect(sent?.axis).toBe('col');
     expect((sent?.weights as number[])[0]).toBeCloseTo(1.2);
-    expect(useStore.getState().resizeDraft).toBeNull();
+    await waitFor(() => expect(useStore.getState().resizeDraft).toBeNull());
+  });
+
+  it('놓은 뒤 저장이 돌아오기 전에는 끈 크기를 그대로 둔다 — 한 프레임 되돌아가지 않게', async () => {
+    render(<App />);
+    await waitForBoot();
+    act(() => {
+      useStore.setState({ editMode: true });
+    });
+    const grid = stubGridWidth(1008);
+
+    fireEvent.mouseDown(document.querySelector('.resize-handle--col')!, { clientX: 500 });
+    fireEvent.mouseMove(window, { clientX: 600 });
+    fireEvent.mouseUp(window);
+
+    // 놓은 그 순간 — 아직 Rust 의 답이 오지 않았다. 예전에는 여기서 초안을 걷어 옛 크기로 튀었다.
+    expect(useStore.getState().resizeDraft).not.toBeNull();
+    expect(grid.style.gridTemplateColumns).toContain('1.2fr');
+    await waitFor(() => expect(useStore.getState().resizeDraft).toBeNull());
   });
 
   it('경계를 끝까지 밀어도 반대쪽 창이 사라지지 않는다', async () => {
@@ -851,5 +917,38 @@ describe('창 경계 크기 조절', () => {
 
     expect(useStore.getState().dragMerge).toBe(false);
     expect(useStore.getState().sel).toBeNull();
+  });
+});
+
+describe('분할 미리보기', () => {
+  it('우클릭 메뉴의 분할 항목에 올리면 그 창 위에 새로 생길 칸이 보인다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.contextMenu(paneEl(TERM_PANE));
+    const item = screen.getByText('위·아래로 분할').closest('button')!;
+
+    fireEvent.mouseEnter(item);
+    expect(paneEl(TERM_PANE).querySelector('.split-preview--topBottom')).toBeTruthy();
+    expect(paneEl(EMPTY_PANE).querySelector('.split-preview')).toBeNull();
+
+    fireEvent.mouseLeave(item);
+    expect(paneEl(TERM_PANE).querySelector('.split-preview')).toBeNull();
+
+    // 누르면 메뉴가 닫히며 미리보기도 함께 걷힌다.
+    fireEvent.mouseEnter(screen.getByText('좌·우로 분할').closest('button')!);
+    fireEvent.click(screen.getByText('좌·우로 분할'));
+    await waitFor(() => expect(backend.calls).toContain('layout_split'));
+    expect(document.querySelector('.split-preview')).toBeNull();
+  });
+});
+
+describe('AI 를 대신 다시 띄울 때', () => {
+  it('그 창 제목줄이 이어 붙이는 중이라고 잠깐 알려 준다', async () => {
+    backend.spawn = { restored: '', banner: '', attached: false, resumed: 'claude' };
+    render(<App />);
+    await waitForBoot();
+
+    expect(await within(paneEl(TERM_PANE)).findByText('↻ claude 이어가는 중')).toBeInTheDocument();
   });
 });

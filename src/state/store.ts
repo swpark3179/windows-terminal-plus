@@ -7,9 +7,10 @@
 
 import { create } from 'zustand';
 import * as api from '../ipc/bridge';
+import { captureLayout, shakePanes } from '../lib/layoutMotion';
 import { loadPrefs, savePrefs } from '../lib/mdView';
-import { inheritForPane, inheritFromSplit, type PendingCwd } from '../lib/paneCwd';
 import type {
+  AiKind,
   MdMode,
   MdPrefs,
   MergeVerdict,
@@ -69,6 +70,8 @@ interface AppState {
   newSession: boolean;
   settings: boolean;
   toast: string | null;
+  /** 토스트가 뜰 때마다 하나씩 는다 — 같은 글이 연달아 와도 새로 떴다는 것을 보여 주려고. */
+  toastSeq: number;
   /** OS 에서 파일을 끌어오는 중. */
   fileDrop: boolean;
   /** 저장 · 버리고 진행 · 취소를 묻는 중. */
@@ -83,13 +86,15 @@ interface AppState {
    * 셸은 계속 살아 있지만 다시 붙을 때 재생되는 스크롤백에는 OSC 가 들어 있지 않다.
    */
   liveTitles: Record<string, string>;
+  /**
+   * 우클릭 메뉴·편집 막대의 분할 항목에 마우스를 올린 동안 — 그 창 위에 새로 생길 칸을 미리 보여 준다.
+   */
+  splitPreview: { paneId: string; dir: SplitDir } | null;
+  /** 앱을 다시 켜며 AI 를 대신 다시 띄운 창. 제목줄 칩이 잠깐 알려 준다. */
+  resuming: Record<string, AiKind>;
   /** 마크다운 뷰어 표시 설정 — 창이 아니라 앱 전체의 것. */
   mdPrefs: MdPrefs;
-  /**
-   * 분할로 갓 생긴 빈 블럭이 물려받을 폴더 (`lib/paneCwd.ts`).
-   * 스냅샷을 갈아 끼우는 모든 길(`apply`)이 이것을 지운다 — 분할 직후에만 유효하다.
-   */
-  pendingCwd: PendingCwd | null;
+  
 
   // ── 액션 ────────────────────────────────────
   boot: () => Promise<void>;
@@ -167,6 +172,8 @@ interface AppState {
   setResizeDraft: (draft: { axis: TrackAxis; weights: number[] } | null) => void;
   setLiveTitle: (paneId: string, title: string) => void;
   clearLiveTitle: (paneId: string) => void;
+  setSplitPreview: (preview: { paneId: string; dir: SplitDir } | null) => void;
+  setResuming: (paneId: string, kind: AiKind | null) => void;
   resetTrackWeights: () => Promise<void>;
   closeOverlays: () => void;
 }
@@ -206,12 +213,14 @@ export const useStore = create<AppState>((set, get) => ({
   newSession: false,
   settings: false,
   toast: null,
+  toastSeq: 0,
   fileDrop: false,
   confirm: null,
   resizeDraft: null,
   liveTitles: {},
+  splitPreview: null,
+  resuming: {},
   mdPrefs: loadPrefs(),
-  pendingCwd: null,
 
   boot: async () => {
     const boot = await api.bootApp();
@@ -237,24 +246,24 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  apply: (snapshot) =>
+  apply: (snapshot) => {
+    // 갈아 끼우기 직전의 창 자리 — 그려진 뒤 `PaneGrid` 가 무엇이 어디로 갔는지 이어 보여 준다.
+    captureLayout(get().snapshot?.activeId);
     set((s) => {
       // 스냅샷에서 사라진 창의 제목은 함께 잊는다 — 세션 삭제·병합·스냅샷 초기화가 모두
       // 여기를 지나므로, 각자 지우게 하는 것보다 한 곳에서 훑는 것이 새지 않는다.
       const ids = new Set(snapshot.sessions.flatMap((x) => x.panes.map((p) => p.id)));
       const stale = Object.keys(s.liveTitles).filter((id) => !ids.has(id));
-      // 물려받을 폴더의 기억(`pendingCwd`)도 여기서 끝난다 — 파일을 열었든 창을 닫았든
-      // 세션을 옮겼든, 상태를 바꾼 일이 하나라도 있었으면 "분할 직후" 가 아니다.
-      // 분할 자신은 이 뒤에 새 기억을 심는다(`splitPane`).
-      if (stale.length === 0) return { snapshot, pendingCwd: null };
+      if (stale.length === 0) return { snapshot };
       const liveTitles = { ...s.liveTitles };
       for (const id of stale) delete liveTitles[id];
-      return { snapshot, liveTitles, pendingCwd: null };
-    }),
+      return { snapshot, liveTitles };
+    });
+  },
 
   flash: (message) => {
     clearTimeout(toastTimer);
-    set({ toast: message });
+    set((s) => ({ toast: message, toastSeq: s.toastSeq + 1 }));
     toastTimer = setTimeout(() => set({ toast: null }), 2600);
   },
 
@@ -302,12 +311,8 @@ export const useStore = create<AppState>((set, get) => ({
     await guard(async () => {
       const res = await api.splitPane(snapshot.activeId, paneId, dir);
       apply(res.snapshot);
-      // 터미널을 나눴다면 대개 "지금 이 폴더에서 하나 더" 라는 뜻이다. 갓 생긴 빈 블럭이
-      // 곧바로 터미널이 될 때만 쓰이고, 그 사이 다른 일이 있으면 `apply` 가 지운다.
-      set({
-        sel: res.newPaneId,
-        pendingCwd: inheritFromSplit(activePanes(res.snapshot), paneId, res.newPaneId),
-      });
+      // 터미널을 나눴다면 새 블럭이 어디서 나왔는지는 Rust 가 스냅샷에 적어 둔다(`splitFrom`).
+      set({ sel: res.newPaneId });
       flash(dir === 'leftRight' ? '좌·우로 분할' : '위·아래로 분할');
     }, flash);
   },
@@ -407,8 +412,10 @@ export const useStore = create<AppState>((set, get) => ({
       set({ op: null, sel: res.keepId });
       flash(res.message);
     } catch (e) {
-      // 병합 불가 — 요구사항대로 사유만 알리고 레이아웃은 그대로 둔다.
+      // 병합 불가 — 요구사항대로 사유만 알리고 레이아웃은 그대로 둔다. 어느 창들이었는지는 창이
+      // 직접 짧게 흔들려 알려 준다.
       flash(typeof e === 'string' ? e : '병합할 수 없습니다');
+      shakePanes(ids);
     }
   },
 
@@ -467,21 +474,17 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   openTerminal: async (paneId) => {
-    const { snapshot, flash, apply, pendingCwd } = get();
+    const { snapshot, flash, apply } = get();
     if (!snapshot) return;
-    const inherit = inheritForPane(activePanes(snapshot), pendingCwd, paneId);
+    const split = activePanes(snapshot).find((p) => p.id === paneId)?.splitFrom;
     await guard(async () => {
-      const next = await api.openTerminalPane(
-        snapshot.activeId,
-        paneId,
-        inherit ? { sourcePaneId: inherit.sourceId, cwd: inherit.cwd } : null,
-      );
+      const next = await api.openTerminalPane(snapshot.activeId, paneId);
       apply(next);
       set({ sel: paneId });
-      // 물려받기는 Rust 가 셸의 실시간 폴더로 한 번 더 판정한다. 그래서 "물려받았다" 는
-      // 말은 돌아온 스냅샷에 폴더가 적혀 있을 때만 한다.
+      // 어느 폴더에서 뜰지는 Rust 가 나눠 준 터미널의 **지금** 폴더로 정한다. 그래서 "물려받았다" 는
+      // 말은 돌아온 스냅샷에 폴더가 적혀 있을 때만 한다 — 못 쓰는 폴더면 세션 폴더에서 뜬다.
       const opened = activePanes(next).find((p) => p.id === paneId);
-      if (inherit && opened?.cwd) flash(`직전 터미널 폴더에서 시작 · ${opened.cwd}`);
+      if (split && opened?.cwd) flash(`나눠 준 터미널 폴더에서 시작 · ${opened.cwd}`);
     }, flash);
   },
 
@@ -684,7 +687,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   openContext: (ctx) => set({ ctx }),
-  closeContext: () => set({ ctx: null }),
+  closeContext: () => set({ ctx: null, splitPreview: null }),
   openPalette: () => set({ palette: true, paletteQuery: '', paletteSel: 0, ctx: null }),
   closePalette: () => set({ palette: false }),
   setPaletteQuery: (paletteQuery) => set({ paletteQuery, paletteSel: 0 }),
@@ -717,6 +720,17 @@ export const useStore = create<AppState>((set, get) => ({
       return { liveTitles };
     }),
 
+  setSplitPreview: (splitPreview) => set({ splitPreview }),
+
+  setResuming: (paneId, kind) =>
+    set((s) => {
+      if (kind ? s.resuming[paneId] === kind : !(paneId in s.resuming)) return s;
+      const resuming = { ...s.resuming };
+      if (kind) resuming[paneId] = kind;
+      else delete resuming[paneId];
+      return { resuming };
+    }),
+
   resetTrackWeights: async () => {
     const { snapshot, flash, apply } = get();
     if (!snapshot) return;
@@ -729,6 +743,7 @@ export const useStore = create<AppState>((set, get) => ({
   closeOverlays: () =>
     set({
       ctx: null,
+      splitPreview: null,
       picker: null,
       newFile: null,
       newSession: false,

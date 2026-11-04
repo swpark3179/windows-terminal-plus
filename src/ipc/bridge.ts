@@ -11,7 +11,6 @@ import type {
   Boot,
   FileEntry,
   ImageDoc,
-  InheritCwd,
   TrackAxis,
   MdMode,
   MergeResult,
@@ -72,11 +71,12 @@ export const closePane = (sessionId: string, paneId: string) =>
  * `inherit` 은 나눠 준 터미널의 폴더를 물려받겠다는 요청이다 — 그 터미널이 아직 그 폴더에
  * 서 있는지는 Rust 가 셸의 실시간 값으로 다시 확인하고, 옮겼으면 세션 폴더에서 띄운다.
  */
-export const openTerminalPane = (
-  sessionId: string,
-  paneId: string,
-  inherit: InheritCwd | null = null,
-) => invoke<Snapshot>('pane_open_terminal', { sessionId, paneId, inherit });
+/**
+ * 빈 블럭을 터미널로. 터미널을 나눠 생긴 블럭이면 어느 폴더에서 뜰지는 Rust 가 정한다
+ * (나눠 준 터미널의 지금 폴더 — `commands::layout::pane_open_terminal`).
+ */
+export const openTerminalPane = (sessionId: string, paneId: string) =>
+  invoke<Snapshot>('pane_open_terminal', { sessionId, paneId });
 
 export const setPaneZoom = (sessionId: string, paneId: string, zoom: number) =>
   invoke<Snapshot>('pane_set_zoom', { sessionId, paneId, zoom });

@@ -442,6 +442,8 @@ pub fn open_terminal(
     // 물려받은 폴더가 없으면 남의 폴더에서 뜨지 않는다. AI 자동 실행도 마찬가지.
     pane.cwd = inherited;
     pane.ai = None;
+    // 물려받기는 한 번뿐이다 — 이제 이 창은 자기 셸이 알려 주는 폴더를 따른다.
+    pane.split_from = None;
     // 터미널은 빈 블럭에만 열리므로 전체화면인 창일 수 없다 — 가려지지 않게 창 모드로.
     s.full_pane_id = None;
     Ok(())

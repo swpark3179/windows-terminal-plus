@@ -3,10 +3,12 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { listFiles } from '../ipc/bridge';
 import { activeSession, useStore } from '../state/store';
 import type { FileEntry } from '../state/types';
+import { useExitMotion } from '../lib/motion';
 
 /** 파일 열기 — 세션 작업 디렉터리를 한 단계 아래까지 훑어 보여 준다. */
 export function FilePicker() {
   const picker = useStore((s) => s.picker);
+  const exitRef = useExitMotion<HTMLDivElement>();
   const snapshot = useStore((s) => s.snapshot);
   const closePicker = useStore((s) => s.closePicker);
   const openFile = useStore((s) => s.openFile);
@@ -48,7 +50,7 @@ export function FilePicker() {
   };
 
   return (
-    <div className="scrim" onMouseDown={closePicker}>
+    <div className="scrim" ref={exitRef} onMouseDown={closePicker}>
       <div className="card picker" onMouseDown={(e) => e.stopPropagation()}>
         <div className="picker__head">
           <div className="picker__title">파일 열기</div>

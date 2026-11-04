@@ -10,6 +10,7 @@ import {
   type Shell,
 } from '../state/types';
 import { TextField } from './TextField';
+import { useExitMotion } from '../lib/motion';
 
 /**
  * 설정 화면이 손에 쥐고 있는 값.
@@ -59,6 +60,7 @@ function DraftField(props: Omit<ComponentProps<typeof TextField>, 'debounceMs'>)
 /** 세션 설정 — 일반 · 환경변수 · 종료 후 복원 요약. */
 export function SettingsModal() {
   const open = useStore((s) => s.settings);
+  const exitRef = useExitMotion<HTMLDivElement>();
   const snapshot = useStore((s) => s.snapshot);
   const close = useStore((s) => s.closeSettings);
   const patch = useStore((s) => s.patchSession);
@@ -132,7 +134,7 @@ export function SettingsModal() {
   ];
 
   return (
-    <div className="scrim scrim--settings" onMouseDown={cancel}>
+    <div className="scrim scrim--settings" ref={exitRef} onMouseDown={cancel}>
       <div className="card settings" onMouseDown={(e) => e.stopPropagation()}>
         <div className="settings__head">
           <div
