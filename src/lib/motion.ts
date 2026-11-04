@@ -53,6 +53,9 @@ export function playExit(node: HTMLElement, ms = EXIT_MS): HTMLElement | null {
   from.forEach((el, i) => {
     if (to[i]) to[i].value = el.value;
   });
+  // 같은 id 가 둘이 되면 `label[for]` 나 `getElementById` 가 복제본을 가리킬 수 있다.
+  ghost.removeAttribute('id');
+  ghost.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
   ghost.setAttribute('data-exit', '');
   ghost.setAttribute('aria-hidden', 'true');
   ghost.inert = true;

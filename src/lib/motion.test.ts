@@ -38,7 +38,7 @@ describe('playExit', () => {
     stubMotion(false);
     const node = document.createElement('div');
     node.className = 'menu';
-    node.innerHTML = '<input value="">';
+    node.innerHTML = '<input id="new-session-name" value="">';
     node.querySelector('input')!.value = '분할';
 
     const ghost = playExit(node)!;
@@ -49,6 +49,7 @@ describe('playExit', () => {
     expect(ghost).toHaveAttribute('aria-hidden', 'true');
     expect(ghost.style.pointerEvents).toBe('none');
     expect(ghost.querySelector('input')!.value).toBe('분할');
+    expect(ghost.querySelector('[id]')).toBeNull();
 
     vi.advanceTimersByTime(EXIT_MS);
     expect(ghost.isConnected).toBe(false);
