@@ -11,8 +11,28 @@
 
 use std::collections::HashMap;
 
+use std::path::Path;
+
 use rterm_core::AiKind;
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+/// 실행 파일 이름 하나를 우리가 찾는 AI 로 읽는다. 경로·확장자·대소문자는 상관없다.
+///
+/// 윈도우의 프로세스 이름은 **확장자까지** 붙어 온다(`claude.exe`). 예전에는 그것을 `"claude"` 와
+/// 곧바로 비교해서 네이티브로 설치한 claude 가 한 번도 잡히지 않았다 — 그래서 복원 때 이어붙이기가
+/// 나가지 않고 셸 프롬프트만 남았다.
+fn program_kind(name: &str) -> Option<AiKind> {
+    let leaf = name.trim().rsplit(['/', '\\']).next().unwrap_or("");
+    let stem = Path::new(leaf)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match stem.as_str() {
+        "claude" => Some(AiKind::Claude),
+        "codex" => Some(AiKind::Codex),
+        _ => None,
+    }
+}
 
 /// 프로세스 하나가 우리가 찾는 AI 인지 본다.
 ///
@@ -20,13 +40,16 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 /// `node.exe …\@anthropic-ai\claude-code\cli.js` 일 수도 있다. 그래서 실행 파일 이름과
 /// 명령줄을 함께 본다. `codex` 는 네이티브 실행 파일이다.
 ///
+/// `exe_name` 은 실행 파일 경로나 이름 — 확장자가 붙어 있어도 된다.
+///
 /// 순수 함수라 프로세스 목록 없이 표로 검증할 수 있다.
-pub fn classify(exe_stem: &str, argv: &[String]) -> Option<AiKind> {
-    let stem = exe_stem.trim().to_ascii_lowercase();
-    match stem.as_str() {
-        "claude" => return Some(AiKind::Claude),
-        "codex" => return Some(AiKind::Codex),
-        _ => {}
+pub fn classify(exe_name: &str, argv: &[String]) -> Option<AiKind> {
+    if let Some(kind) = program_kind(exe_name) {
+        return Some(kind);
+    }
+    // 실행 파일 정보를 못 읽었을 때의 두 번째 그물 — argv[0] 은 대개 그 프로그램 자신이다.
+    if let Some(kind) = argv.first().and_then(|a| program_kind(a)) {
+        return Some(kind);
     }
 
     // 런처를 거쳐 뜬 경우 — 인자에서 실제 프로그램을 찾는다.
@@ -57,10 +80,14 @@ pub fn detect(shells: &[(String, u32)]) -> HashMap<String, AiKind> {
     }
 
     let mut sys = System::new();
+    // 실행 파일 경로는 **따로 청해야** 채워진다(`with_exe`). 청하지 않으면 `exe()` 가 비어
+    // 프로세스 이름으로 물러나는데, 그 이름은 윈도우에서 `claude.exe` 처럼 확장자가 붙어 온다.
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
         true,
-        ProcessRefreshKind::nothing().with_cmd(sysinfo::UpdateKind::Always),
+        ProcessRefreshKind::nothing()
+            .with_cmd(UpdateKind::Always)
+            .with_exe(UpdateKind::OnlyIfNotSet),
     );
 
     // 부모 → 자식 목록. 자손을 훑으려면 반대 방향이 필요하다.
@@ -85,17 +112,16 @@ pub fn detect(shells: &[(String, u32)]) -> HashMap<String, AiKind> {
             let Some(proc_) = sys.process(pid) else {
                 continue;
             };
-            let stem = proc_
+            let name = proc_
                 .exe()
-                .and_then(|p| p.file_stem())
-                .map(|s| s.to_string_lossy().to_string())
+                .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| proc_.name().to_string_lossy().to_string());
             let argv: Vec<String> = proc_
                 .cmd()
                 .iter()
                 .map(|a| a.to_string_lossy().to_string())
                 .collect();
-            if let Some(kind) = classify(&stem, &argv) {
+            if let Some(kind) = classify(&name, &argv) {
                 found.insert(pane_id.clone(), kind);
                 break;
             }
@@ -125,6 +151,42 @@ mod tests {
         assert_eq!(classify("codex", &argv(&["codex"])), Some(AiKind::Codex));
         // 대소문자는 상관없다.
         assert_eq!(classify("Claude", &argv(&["Claude.exe"])), Some(AiKind::Claude));
+    }
+
+    #[test]
+    fn the_windows_process_name_carries_its_extension() {
+        // 윈도우의 프로세스 이름은 `claude.exe` 다. 실행 파일 경로를 못 읽어 이름으로 물러났을 때도
+        // 잡혀야 한다 — 예전에는 여기서 놓쳐 네이티브 claude 가 복원되지 않았다.
+        assert_eq!(
+            classify("claude.exe", &argv(&["claude", "--continue"])),
+            Some(AiKind::Claude)
+        );
+        assert_eq!(
+            classify(
+                "C:\\Users\\me\\.local\\bin\\claude.exe",
+                &argv(&["C:\\Users\\me\\.local\\bin\\claude.exe", "--dangerously-skip-permissions"])
+            ),
+            Some(AiKind::Claude)
+        );
+        assert_eq!(classify("CODEX.EXE", &argv(&["codex.exe", "resume"])), Some(AiKind::Codex));
+    }
+
+    #[test]
+    fn argv0_is_a_second_net_when_the_executable_is_unknown() {
+        // 남의 프로세스 실행 파일 경로는 권한에 따라 비어 올 수 있다.
+        assert_eq!(
+            classify("", &argv(&["C:\\Users\\me\\.local\\bin\\claude.exe", "-c"])),
+            Some(AiKind::Claude)
+        );
+        assert_eq!(classify("", &argv(&["/usr/local/bin/codex"])), Some(AiKind::Codex));
+        assert_eq!(classify("", &argv(&[])), None);
+    }
+
+    #[test]
+    fn look_alike_names_with_extensions_are_not_ai() {
+        assert_eq!(classify("claudia.exe", &argv(&["claudia.exe"])), None);
+        assert_eq!(classify("claude-helper.exe", &argv(&["claude-helper.exe"])), None);
+        assert_eq!(classify("pwsh.exe", &argv(&["pwsh.exe", "-NoLogo"])), None);
     }
 
     #[test]

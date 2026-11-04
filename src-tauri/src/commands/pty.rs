@@ -170,6 +170,27 @@ fn apply_shell_events(meta: &ShellMetaRef, events: &[rterm_term::ShellEvent]) {
     }
 }
 
+/// 셸 통합이 없는 셸(ssh 등)에서 첫 줄을 보내기 전에 주는 시간. 프롬프트가 뜰 틈이다.
+const NO_MARKER_DELAY: Duration = Duration::from_millis(400);
+
+/// 셸 통합이 있는 셸에서 첫 프롬프트를 기다리는 상한. 프로필이 무거운 pwsh 도 대개 이 안에 뜬다.
+const FIRST_PROMPT_DEADLINE: Duration = Duration::from_secs(5);
+
+/// 셸이 **첫** 프롬프트를 그릴 때까지 기다린다(셸 통합 마커 기준).
+///
+/// 예전에는 무조건 400ms 를 쉬고 보냈다. 프로필이 무거운 pwsh(oh-my-posh·conda·모듈 자동 로드)는
+/// 그보다 늦게 뜨는데, 그 사이에 친 글자는 프로필이 읽어 가거나 프롬프트 앞에 섞여 복원할
+/// `claude --continue` 가 실행되지 않는 일이 있었다. 마커가 끝내 오지 않아도 시간 안에 풀린다.
+fn wait_for_first_prompt(meta: &ShellMetaRef, deadline: Duration) {
+    let start = std::time::Instant::now();
+    while start.elapsed() < deadline {
+        if meta.lock().prompt_seq > 0 {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// 프롬프트가 한 번 더 돌아올 때까지 기다린다. 마커가 없는 셸에서도 반드시 시간 안에 풀린다.
 fn wait_for_prompt(meta: &ShellMetaRef, deadline: Duration) {
     let start = std::time::Instant::now();
@@ -224,7 +245,7 @@ pub fn pty_open(
 
     let config_dir = state.config_dir.clone();
 
-    let (spec, start, restored, restore_ai, cwd_fell_back) = {
+    let (spec, start, restored, restore_ai, cwd_fell_back, expects_marker) = {
         let mut snap = state.snapshot.lock();
         let session = snap
             .session_mut(&session_id)
@@ -239,6 +260,8 @@ pub fn pty_open(
         } else {
             shellinit::for_shell(&config_dir, session.shell)
         };
+        // 셸 통합을 넣었으면 프롬프트마다 마커가 온다 — 첫 줄을 보낼 때를 그것으로 정한다.
+        let expects_marker = init.is_some();
         let spec = shell_spec(session, &cwd, restoring, init, cols, rows)?;
         let start = session.start.trim().to_string();
 
@@ -250,7 +273,7 @@ pub fn pty_open(
             .and_then(|p| p.scrollback.take())
             .unwrap_or_default();
         let restore_ai = pane_mut.and_then(|p| p.ai.take());
-        (spec, start, restored, restore_ai, cwd_fell_back)
+        (spec, start, restored, restore_ai, cwd_fell_back, expects_marker)
     };
 
     let core = Arc::new(Mutex::new(TermCore::new(
@@ -306,7 +329,8 @@ pub fn pty_open(
     let pty = Arc::new(pty);
 
     // 시작 명령과 AI 이어붙이기를 순서대로 흘려보낸다.
-    // 첫 줄은 프롬프트가 뜰 시간을 준 뒤(400ms), 다음 줄은 프롬프트 마커를 기다렸다 보낸다.
+    // 첫 줄은 첫 프롬프트 마커를 기다린 뒤(마커가 없는 셸은 400ms), 다음 줄은 프롬프트가 한 번
+    // 더 돌아오기를 기다렸다 보낸다.
     let mut boot: Vec<String> = Vec::new();
     if !start.is_empty() {
         boot.push(start);
@@ -318,7 +342,11 @@ pub fn pty_open(
         let pty_for_boot = pty.clone();
         let meta_for_boot = meta.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(400));
+            if expects_marker {
+                wait_for_first_prompt(&meta_for_boot, FIRST_PROMPT_DEADLINE);
+            } else {
+                std::thread::sleep(NO_MARKER_DELAY);
+            }
             for (i, line) in boot.iter().enumerate() {
                 if i > 0 {
                     wait_for_prompt(&meta_for_boot, Duration::from_secs(3));
@@ -573,6 +601,41 @@ mod tests {
             after.contains("line 0"),
             "일반 화면의 스크롤백은 그대로 남는다 — 지운 척하면 안 된다: {after:?}"
         );
+    }
+
+    #[test]
+    fn the_first_prompt_releases_the_boot_line_at_once() {
+        // 셸이 이미 프롬프트를 그렸으면(마커를 봤으면) 기다리지 않는다.
+        let meta: ShellMetaRef = Arc::new(Mutex::new(ShellMeta::default()));
+        apply_shell_events(&meta, &[rterm_term::ShellEvent::Cwd("/tmp".into())]);
+        let start = std::time::Instant::now();
+        wait_for_first_prompt(&meta, Duration::from_secs(5));
+        assert!(start.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn the_first_prompt_wait_gives_up_without_a_marker() {
+        // 마커를 지우는 프롬프트(oh-my-posh 등)여도 부트 스레드가 영원히 붙잡혀 있으면 안 된다.
+        let meta: ShellMetaRef = Arc::new(Mutex::new(ShellMeta::default()));
+        let start = std::time::Instant::now();
+        wait_for_first_prompt(&meta, Duration::from_millis(150));
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn the_first_prompt_wait_notices_a_marker_that_arrives_later() {
+        let meta: ShellMetaRef = Arc::new(Mutex::new(ShellMeta::default()));
+        let late = meta.clone();
+        let feeder = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(120));
+            apply_shell_events(&late, &[rterm_term::ShellEvent::Cwd("/tmp".into())]);
+        });
+        let start = std::time::Instant::now();
+        wait_for_first_prompt(&meta, Duration::from_secs(5));
+        let waited = start.elapsed();
+        feeder.join().unwrap();
+        assert!(waited >= Duration::from_millis(100), "마커 전에는 보내지 않는다: {waited:?}");
+        assert!(waited < Duration::from_secs(2), "마커가 오면 곧바로 풀린다: {waited:?}");
     }
 
     #[test]
