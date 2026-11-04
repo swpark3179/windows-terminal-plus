@@ -11,6 +11,7 @@ export function EditToolbar() {
   const startSwap = useStore((s) => s.startSwap);
   const resetTrackWeights = useStore((s) => s.resetTrackWeights);
   const toggleEdit = useStore((s) => s.toggleEdit);
+  const setSplitPreview = useStore((s) => s.setSplitPreview);
 
   const session = activeSession(snapshot);
   const pane = session?.panes.find((p) => p.id === sel) ?? null;
@@ -20,6 +21,12 @@ export function EditToolbar() {
       ? `빈 블럭 r${pane.r}·c${pane.c}`
       : pane.title
     : '없음 — 창 클릭';
+
+  /** 분할 버튼에 올리면 고른 창 위에 새로 생길 칸을 미리 보여 준다. */
+  const previewOn = (dir: 'topBottom' | 'leftRight') => ({
+    onMouseEnter: () => pane && setSplitPreview({ paneId: pane.id, dir }),
+    onMouseLeave: () => setSplitPreview(null),
+  });
 
   const hint =
     op === 'merge'
@@ -39,14 +46,22 @@ export function EditToolbar() {
       <button
         className="edit-btn"
         disabled={!pane}
-        onClick={() => void splitSelected('topBottom')}
+        {...previewOn('topBottom')}
+        onClick={() => {
+          setSplitPreview(null);
+          void splitSelected('topBottom');
+        }}
       >
         ⬍ 위·아래 분할
       </button>
       <button
         className="edit-btn"
         disabled={!pane}
-        onClick={() => void splitSelected('leftRight')}
+        {...previewOn('leftRight')}
+        onClick={() => {
+          setSplitPreview(null);
+          void splitSelected('leftRight');
+        }}
       >
         ⬌ 좌·우 분할
       </button>

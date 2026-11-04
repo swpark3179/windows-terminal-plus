@@ -64,6 +64,7 @@ import {
   TEXT_PANE,
   backend,
   makeDirtySnapshot,
+  makeSnapshot,
   requestWindowClose,
   resetBackend,
   withSplitTerminal,
@@ -584,8 +585,8 @@ describe('전체화면', () => {
 
     fireEvent.click(fullButton());
 
-    // 빈 블럭은 화면에서 빠지고 터미널만 남는다.
-    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeNull());
+    // 빈 블럭은 그 뒤에 숨고 터미널만 보인다 — 지우지 않으므로 돌아오면 그대로 살아 있다.
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toHaveClass('pane--behind'));
     expect(backend.lastArgs('pane_set_full')).toMatchObject({
       sessionId: 'ses_test',
       paneId: TERM_PANE,
@@ -603,11 +604,11 @@ describe('전체화면', () => {
     await waitForBoot();
 
     fireEvent.click(fullButton());
-    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeNull());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toHaveClass('pane--behind'));
 
     fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true });
 
-    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeTruthy());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).not.toHaveClass('pane--behind'));
     expect(backend.lastArgs('pane_set_full')).toMatchObject({ paneId: null });
     expect(document.querySelector('.stage--full')).toBeNull();
   });
@@ -633,14 +634,33 @@ describe('전체화면', () => {
     await waitForBoot();
 
     fireEvent.click(fullButton());
-    await waitFor(() => expect(paneEl(EMPTY_PANE)).toBeNull());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toHaveClass('pane--behind'));
 
     // 세션 헤더가 숨어 있어도 단축키는 그대로 듣는다.
     fireEvent.keyDown(window, { key: 'e', ctrlKey: true });
 
     await waitFor(() => expect(backend.lastArgs('pane_set_full')).toMatchObject({ paneId: null }));
-    expect(paneEl(EMPTY_PANE)).toBeTruthy();
+    expect(paneEl(EMPTY_PANE)).not.toHaveClass('pane--behind');
     expect(useStore.getState().editMode).toBe(true);
+  });
+
+  it('뒤에 숨은 터미널은 떼었다 다시 붙지 않는다 — 셸 화면이 그대로 산다', async () => {
+    // 터미널 두 개가 나란히 있는 세션.
+    const two = makeSnapshot();
+    two.sessions[0].panes[1] = { ...two.sessions[0].panes[1], kind: 'term', title: 'pwsh · 새 터미널', alive: true };
+    backend.snapshot = two;
+    render(<App />);
+    await waitForBoot();
+    await waitFor(() => expect(backend.calls.filter((c) => c === 'pty_open')).toHaveLength(2));
+
+    fireEvent.click(fullButton());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).toHaveClass('pane--behind'));
+    fireEvent.click(fullButton());
+    await waitFor(() => expect(paneEl(EMPTY_PANE)).not.toHaveClass('pane--behind'));
+
+    // 예전에는 전체화면을 오갈 때마다 숨은 터미널이 pty_detach → pty_open 으로 화면을 다시 받았다.
+    expect(backend.calls.filter((c) => c === 'pty_detach')).toHaveLength(0);
+    expect(backend.calls.filter((c) => c === 'pty_open')).toHaveLength(2);
   });
 });
 
@@ -897,5 +917,38 @@ describe('창 경계 크기 조절', () => {
 
     expect(useStore.getState().dragMerge).toBe(false);
     expect(useStore.getState().sel).toBeNull();
+  });
+});
+
+describe('분할 미리보기', () => {
+  it('우클릭 메뉴의 분할 항목에 올리면 그 창 위에 새로 생길 칸이 보인다', async () => {
+    render(<App />);
+    await waitForBoot();
+
+    fireEvent.contextMenu(paneEl(TERM_PANE));
+    const item = screen.getByText('위·아래로 분할').closest('button')!;
+
+    fireEvent.mouseEnter(item);
+    expect(paneEl(TERM_PANE).querySelector('.split-preview--topBottom')).toBeTruthy();
+    expect(paneEl(EMPTY_PANE).querySelector('.split-preview')).toBeNull();
+
+    fireEvent.mouseLeave(item);
+    expect(paneEl(TERM_PANE).querySelector('.split-preview')).toBeNull();
+
+    // 누르면 메뉴가 닫히며 미리보기도 함께 걷힌다.
+    fireEvent.mouseEnter(screen.getByText('좌·우로 분할').closest('button')!);
+    fireEvent.click(screen.getByText('좌·우로 분할'));
+    await waitFor(() => expect(backend.calls).toContain('layout_split'));
+    expect(document.querySelector('.split-preview')).toBeNull();
+  });
+});
+
+describe('AI 를 대신 다시 띄울 때', () => {
+  it('그 창 제목줄이 이어 붙이는 중이라고 잠깐 알려 준다', async () => {
+    backend.spawn = { restored: '', banner: '', attached: false, resumed: 'claude' };
+    render(<App />);
+    await waitForBoot();
+
+    expect(await within(paneEl(TERM_PANE)).findByText('↻ claude 이어가는 중')).toBeInTheDocument();
   });
 });

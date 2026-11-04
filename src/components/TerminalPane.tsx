@@ -42,6 +42,12 @@ import { TerminalScrollbar } from './TerminalScrollbar';
  */
 const SYSTEM_SELECTION = 'c' as ClipboardSelectionType;
 
+/**
+ * AI 를 대신 다시 띄웠다는 칩을 보여 주는 시간(ms). 첫 프롬프트를 기다렸다 명령을 치고(최대 5초,
+ * `pty_open`), claude 가 뜨기까지 1~2초가 더 걸린다.
+ */
+const RESUME_CHIP_MS = 6000;
+
 /** 벨을 화면으로 알리는 시간(ms). 소리는 내지 않는다 — 창이 여럿인 앱에서 어느 창인지 알 수 없다. */
 const BELL_FLASH_MS = 140;
 
@@ -418,9 +424,14 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       schedule();
     };
 
+    let resumeTimer: ReturnType<typeof setTimeout> | undefined;
     void openPty(sessionId, pane.id, term.cols, term.rows, channel)
       .then((res) => {
         if (disposed) return;
+        if (res.resumed) {
+          useStore.getState().setResuming(pane.id, res.resumed);
+          resumeTimer = setTimeout(() => useStore.getState().setResuming(pane.id, null), RESUME_CHIP_MS);
+        }
         // 새로 띄운 셸이면 앞선 셸의 제목을 물려받지 않는다 (다시 붙은 것이면 그대로 둔다 —
         // 재생되는 스크롤백에는 OSC 가 없어서 그 제목이 유일하게 남은 정보다).
         if (!res.attached) useStore.getState().clearLiveTitle(pane.id);
@@ -487,6 +498,8 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       titleSub.dispose();
       bellSub.dispose();
       clearTimeout(bellTimer);
+      clearTimeout(resumeTimer);
+      useStore.getState().setResuming(pane.id, null);
       bodyRef.current?.classList.remove('term-body--bell');
       clearTimeout(flushTimer);
       textarea?.removeEventListener('compositionstart', onCompositionStart);

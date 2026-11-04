@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use rterm_core::{Pane, PaneKind, Session, Shell, SCROLLBACK_LINES};
+use rterm_core::{AiKind, Pane, PaneKind, Session, Shell, SCROLLBACK_LINES};
 use rterm_pty::{PtyHandle, SpawnSpec};
 use rterm_term::TermCore;
 use serde::Serialize;
@@ -26,6 +26,8 @@ pub struct SpawnResult {
     pub banner: String,
     /// 이미 돌고 있던 셸에 화면만 다시 붙였는지. false 면 새로 띄운 것.
     pub attached: bool,
+    /// 끄기 전에 돌던 AI 를 대신 다시 띄우는 중이면 그 종류. 창 제목줄이 잠깐 알려 준다.
+    pub resumed: Option<AiKind>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -239,6 +241,7 @@ pub fn pty_open(
                     restored,
                     banner: String::new(),
                     attached: true,
+                    resumed: None,
                 });
             }
         }
@@ -404,6 +407,7 @@ pub fn pty_open(
         restored,
         banner,
         attached: false,
+        resumed: restore_ai,
     })
 }
 

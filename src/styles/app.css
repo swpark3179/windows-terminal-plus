@@ -748,6 +748,8 @@ button:not(:disabled):active {
 }
 
 .pane {
+  /* 분할 미리보기(`.split-preview`)가 이 상자를 기준으로 앉는다. */
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -793,6 +795,17 @@ button:not(:disabled):active {
   border: none;
   border-radius: 0;
   box-shadow: none;
+  /* 격자 전체를 덮는다(`grid-area: 1 / 1 / -1 / -1`). 나머지 창은 그 뒤에 숨어 그대로 산다. */
+  z-index: 2;
+}
+
+/*
+ * 전체화면 뒤에 숨은 창. 지우지 않으므로 셸·xterm·스크롤 자리가 그대로고, 창 모드로 돌아오면
+ * 다시 붙이는 일 없이 곧바로 보인다. `visibility` 라 크기는 그대로라 터미널이 다시 맞추지도 않는다.
+ */
+.pane--behind {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 
@@ -2161,6 +2174,11 @@ mark.md-hit--on {
   z-index: 20;
   display: grid;
   place-items: center;
+  animation: fade-in var(--dur-2) var(--ease-out);
+  /* 병합할 수 없는 조합이 되면 놓기 전에 붉은 톤으로 — 뚝 바뀌지 않고 번지듯. */
+  transition:
+    background-color var(--dur-2) ease,
+    border-color var(--dur-2) ease;
 }
 
 .merge-overlay--bad {
@@ -2198,6 +2216,10 @@ mark.md-hit--on {
 
 .merge-badge--bad {
   background: #b0472a;
+}
+
+.merge-badge {
+  transition: background-color var(--dur-2) ease;
 }
 
 .drop-overlay {
@@ -3028,6 +3050,75 @@ mark.md-hit--on {
 
 .menu[data-exit] {
   animation: fade-out var(--dur-1) var(--ease-in) forwards;
+}
+
+/* ── 배치 모션 (`lib/layoutMotion.ts`) ───────────────── */
+
+/*
+ * 분할·병합·교환·전체화면 때 옛 자리에서 새 자리로 가는 윤곽. 창 자체는 곧바로 새 자리에 그려지고
+ * 이 빈 상자만 움직인다 — 터미널 글자를 늘이거나 매 프레임 다시 맞추지 않으려고.
+ */
+.layout-frame {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  border: 1.5px solid var(--accent);
+  border-radius: 8px;
+  background: #c964420d;
+  box-shadow: 0 0 0 3px #c964421a;
+}
+
+/* 분할 메뉴에 마우스를 올린 동안 — 이 창의 어느 쪽이 새 칸이 되는지. */
+.split-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+  border-radius: inherit;
+  overflow: hidden;
+  animation: fade-in var(--dur-2) var(--ease-out);
+}
+
+.split-preview__half {
+  border: 1.5px dashed var(--accent);
+  border-radius: 6px;
+  background: #c9644214;
+  margin: 3px;
+}
+
+.split-preview--leftRight .split-preview__half {
+  width: calc(50% - 6px);
+  height: calc(100% - 6px);
+}
+
+.split-preview--topBottom .split-preview__half {
+  width: calc(100% - 6px);
+  height: calc(50% - 6px);
+}
+
+/* 앱을 다시 켜며 AI 를 대신 다시 띄운 창 — 잠깐 떠서 "지금 이어 붙이는 중" 을 알린다. */
+.pane__resume {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-family: var(--mono);
+  color: var(--term-accent);
+  border: 1px solid #d99b7455;
+  border-radius: 9px;
+  padding: 0 7px;
+  line-height: 15px;
+  white-space: nowrap;
+  animation:
+    fade-in var(--dur-2) var(--ease-out),
+    resume-pulse 1.4s ease-in-out var(--dur-2) infinite;
+}
+
+@keyframes resume-pulse {
+  50% {
+    opacity: 0.55;
+  }
 }
 
 /* ── 토스트 ─────────────────────────────────────────── */

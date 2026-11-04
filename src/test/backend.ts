@@ -161,7 +161,7 @@ export interface Backend {
   /** `pane_create_file` 이 거부할 때의 사유 문구. `null` 이면 성공. */
   createFileError: string | null;
   /** `pty_open` 이 돌려줄 것 — 복원·재연결을 흉내 낼 때 바꾼다. */
-  spawn: { restored: string; banner: string; attached: boolean };
+  spawn: { restored: string; banner: string; attached: boolean; resumed?: 'claude' | 'codex' | null };
   snapshot: Snapshot;
 }
 

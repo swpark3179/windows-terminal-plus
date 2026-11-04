@@ -134,6 +134,8 @@ export interface SpawnResult {
   banner: string;
   /** 이미 돌고 있던 셸에 다시 붙었는지. */
   attached: boolean;
+  /** 끄기 전에 돌던 AI 를 대신 다시 띄우는 중이면 그 종류. */
+  resumed?: AiKind | null;
 }
 
 export interface FileEntry {

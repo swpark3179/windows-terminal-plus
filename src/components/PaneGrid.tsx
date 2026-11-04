@@ -1,4 +1,5 @@
-import { useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
+import { playLayout } from '../lib/layoutMotion';
 import { activeSession, fullPane, useStore } from '../state/store';
 import type { Pane, TrackAxis } from '../state/types';
 import { PaneView } from './Pane';
@@ -33,6 +34,13 @@ export function PaneGrid() {
   const gridRef = useRef<HTMLDivElement>(null);
 
   const session = activeSession(snapshot);
+
+  // 스냅샷을 갈아 끼우기 직전에 재 둔 창 자리와 지금 그려진 자리를 이어 보여 준다(`lib/layoutMotion`).
+  // 의존성 없이 매 커밋 부른다 — 재 둔 것이 없으면 곧바로 돌아간다.
+  useLayoutEffect(() => {
+    if (session) playLayout(session.id);
+  });
+
   if (!session) return null;
 
   // 전체화면 — 격자는 그대로 두고 창 하나만 세션 영역을 채운다.
@@ -70,23 +78,24 @@ export function PaneGrid() {
       <div
         className="grid"
         ref={gridRef}
-        style={
-          full
-            ? { gridTemplateColumns: '1fr', gridTemplateRows: '1fr' }
-            : {
-                gridTemplateColumns: tracks(
-                  draftFor('col') ?? session.grid.colWeights,
-                  session.grid.cols,
-                ),
-                gridTemplateRows: tracks(
-                  draftFor('row') ?? session.grid.rowWeights,
-                  session.grid.rows,
-                ),
-              }
-        }
+        style={{
+          gridTemplateColumns: tracks(draftFor('col') ?? session.grid.colWeights, session.grid.cols),
+          gridTemplateRows: tracks(draftFor('row') ?? session.grid.rowWeights, session.grid.rows),
+        }}
       >
-        {(full ? [full] : session.panes).map((pane) => (
-          <PaneView key={pane.id} pane={pane} session={session} full={!!full} />
+        {/*
+          전체화면이어도 다른 창을 **지우지 않는다.** 예전에는 고른 창 하나만 그려서, 창 모드로 돌아올
+          때마다 다른 터미널들이 xterm 을 새로 만들고 Rust 버퍼를 다시 받아 그렸다(그 사이 대체 화면·
+          스크롤 상태가 흔들린다). 이제 고른 창이 격자 전체를 덮고 나머지는 그 뒤에 숨어 그대로 산다.
+        */}
+        {session.panes.map((pane) => (
+          <PaneView
+            key={pane.id}
+            pane={pane}
+            session={session}
+            full={full?.id === pane.id}
+            behind={!!full && full.id !== pane.id}
+          />
         ))}
 
         {showHandles && <ResizeHandles session={session} gridRef={gridRef} />}

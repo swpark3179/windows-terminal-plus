@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useExitMotion } from '../lib/motion';
 import { terminalClipboard } from '../lib/terminalRegistry';
 import { activeSession, useStore } from '../state/store';
+import type { SplitDir } from '../state/types';
 
 interface Item {
   key: string;
@@ -9,6 +10,8 @@ interface Item {
   label: string;
   shortcut?: string;
   danger?: boolean;
+  /** 마우스를 올리면 그 창 위에 새로 생길 칸을 미리 보여 준다. */
+  preview?: SplitDir;
   run: () => void;
 }
 
@@ -32,6 +35,7 @@ export function ContextMenu() {
   const toggleFull = useStore((s) => s.toggleFull);
   const savePane = useStore((s) => s.savePane);
   const revealCwd = useStore((s) => s.revealCwd);
+  const setSplitPreview = useStore((s) => s.setSplitPreview);
   const boxRef = useRef<HTMLDivElement | null>(null);
   const exitRef = useExitMotion(boxRef);
 
@@ -77,12 +81,14 @@ export function ContextMenu() {
         key: 'sh',
         icon: '⬍',
         label: '위·아래로 분할',
+        preview: 'topBottom',
         run: () => void splitPane(ctx.id, 'topBottom'),
       },
       {
         key: 'sv',
         icon: '⬌',
         label: '좌·우로 분할',
+        preview: 'leftRight',
         run: () => void splitPane(ctx.id, 'leftRight'),
       },
       {
@@ -173,6 +179,10 @@ export function ContextMenu() {
         <button
           key={m.key}
           className={`menu__item${m.danger ? ' menu__item--danger' : ''}`}
+          onMouseEnter={
+            m.preview ? () => setSplitPreview({ paneId: ctx.id, dir: m.preview! }) : undefined
+          }
+          onMouseLeave={m.preview ? () => setSplitPreview(null) : undefined}
           onClick={() => {
             close();
             m.run();

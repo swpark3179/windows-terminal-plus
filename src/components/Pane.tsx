@@ -64,11 +64,14 @@ export function PaneView({
   pane,
   session,
   full = false,
+  behind = false,
 }: {
   pane: Pane;
   session: Session;
   /** 이 창 혼자 세션 영역을 채우고 있는가 (전체화면). */
   full?: boolean;
+  /** 다른 창이 전체화면이라 그 뒤에 숨어 있는가. 지우지 않고 숨겨 두어 셸·화면이 그대로 산다. */
+  behind?: boolean;
 }) {
   const editMode = useStore((s) => s.editMode);
   const sel = useStore((s) => s.sel);
@@ -84,6 +87,8 @@ export function PaneView({
   const toggleFull = useStore((s) => s.toggleFull);
   // 셸이 OSC 0/2 로 알려 준 제목이 있으면 그것이 진실이다 — 지금 무엇이 도는지를 알려 준다.
   const liveTitle = useStore((s) => s.liveTitles[pane.id]);
+  const preview = useStore((s) => (s.splitPreview?.paneId === pane.id ? s.splitPreview.dir : null));
+  const resuming = useStore((s) => s.resuming[pane.id]);
 
   const inMerge = !!mergeSet?.includes(pane.id);
   const marked = inMerge || (editMode && sel === pane.id);
@@ -117,13 +122,12 @@ export function PaneView({
         selected ? 'pane--selected' : '',
         dimmed ? 'pane--dimmed' : '',
         full ? 'pane--full' : '',
+        behind ? 'pane--behind' : '',
       ]
         .filter(Boolean)
         .join(' ')}
       style={{
-        gridArea: full
-          ? '1 / 1 / span 1 / span 1'
-          : `${pane.r} / ${pane.c} / span ${pane.rs} / span ${pane.cs}`,
+        gridArea: full ? '1 / 1 / -1 / -1' : `${pane.r} / ${pane.c} / span ${pane.rs} / span ${pane.cs}`,
       }}
       onMouseDown={() => paneMouseDown(pane.id)}
       onMouseEnter={() => paneMouseEnter(pane.id)}
@@ -148,6 +152,11 @@ export function PaneView({
           <div className="pane__title" title={pane.path ?? title}>
             {title}
           </div>
+          {resuming && (
+            <div className="pane__resume" title={`앱을 다시 켜며 ${resuming} 대화를 이어 붙이는 중`}>
+              ↻ {resuming} 이어가는 중
+            </div>
+          )}
           {pane.dirty && (
             <div className="pane__dirty" title="저장되지 않은 변경 · Ctrl+S">
               ●
@@ -241,6 +250,11 @@ export function PaneView({
         </div>
       )}
 
+      {preview && (
+        <div className={`split-preview split-preview--${preview}`} aria-hidden="true">
+          <div className="split-preview__half" />
+        </div>
+      )}
       {isEmpty && <EmptyBody pane={pane} />}
       {pane.kind === 'term' && <TerminalPane pane={pane} sessionId={session.id} />}
       {pane.kind === 'text' && <TextPane pane={pane} sessionId={session.id} />}
