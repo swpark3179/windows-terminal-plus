@@ -24,12 +24,17 @@ import {
   normalizeCopyText,
   sanitizePasteText,
 } from '../lib/clipboard';
-import { appOwnsKey, terminalKeyAction } from '../lib/keys';
+import { appOwnsKey, imeStrayControl, terminalKeyAction } from '../lib/keys';
 import { createTermLinks } from '../lib/termLinks';
 import { sanitizeTerminalText } from '../lib/termText';
 import { TERM_THEME, WORD_SEPARATOR } from '../lib/termTheme';
 import { registerTerminalClipboard, terminalClipboard } from '../lib/terminalRegistry';
-import { WIN32_INPUT_MODE, newlineSequence, setWin32InputMode } from '../lib/win32Input';
+import {
+  WIN32_INPUT_MODE,
+  inputSequence,
+  newlineSequence,
+  setWin32InputMode,
+} from '../lib/win32Input';
 import { useStore } from '../state/store';
 import type { Pane, PtyExitEvent } from '../state/types';
 import { TerminalScrollbar } from './TerminalScrollbar';
@@ -254,8 +259,8 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     let composing = false;
     /** 조합이 끝나 xterm 이 그 글자를 내보내기를 기다리는 중. */
     let flushTimer: ReturnType<typeof setTimeout> | undefined;
-    /** 그 사이에 눌린 줄바꿈 수. */
-    let heldNewlines = 0;
+    /** 그 사이에 눌려 글자 뒤로 미룬 입력(줄바꿈 · IME 가 버릴 뻔한 제어 키), 누른 순서대로. */
+    let held: Array<() => void> = [];
 
     const sendNewline = () => {
       // 스크롤을 올려 둔 채 넣은 줄이 화면 밖에 남지 않게 한다 — 키를 가로챈 탓에
@@ -266,21 +271,23 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       void writePty(pane.id, newlineSequence(pane.id)).catch(() => {});
     };
 
-    const releaseNewlines = () => {
+    const releaseHeld = () => {
       flushTimer = undefined;
-      const held = heldNewlines;
-      heldNewlines = 0;
-      for (let i = 0; i < held; i += 1) sendNewline();
+      const pending = held;
+      held = [];
+      for (const send of pending) send();
     };
 
-    const pressNewline = () => {
-      // 조합 중이거나, 조합이 방금 끝나 글자가 아직 나가지 않았으면 그 뒤로 미룬다.
+    /** 조합 중이거나, 조합이 방금 끝나 글자가 아직 나가지 않았으면 그 뒤로 미룬다. */
+    const afterComposition = (send: () => void) => {
       if (composing || flushTimer !== undefined) {
-        heldNewlines += 1;
+        held.push(send);
         return;
       }
-      sendNewline();
+      send();
     };
+
+    const pressNewline = () => afterComposition(sendNewline);
 
     const onCompositionStart = () => {
       composing = true;
@@ -288,13 +295,30 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     const onCompositionEnd = () => {
       composing = false;
       clearTimeout(flushTimer);
-      flushTimer = setTimeout(releaseNewlines, 0);
+      flushTimer = setTimeout(releaseHeld, 0);
     };
     textarea?.addEventListener('compositionstart', onCompositionStart);
     textarea?.addEventListener('compositionend', onCompositionEnd);
 
     term.attachCustomKeyEventHandler((e) => {
       const action = terminalKeyAction(e);
+      // 선택이 없으면 Ctrl+C 는 예전처럼 셸로 가 실행 중인 명령을 끊는다.
+      const passThrough = action === 'copy-if-selection' && term.getSelection().trim() === '';
+
+      // 한글 입력 상태에서 IME 가 229 표시만 붙여 넘긴 Ctrl+C·Esc. 그대로 두면 xterm 이 IME 의 것으로
+      // 보고 버린다(`lib/keys.ts` 의 `imeStrayControl`). 조합 중이 아니면 IME 가 할 일이 없으니 같은
+      // 바이트를 타이핑과 같은 길로 대신 보낸다 — 조합이 막 끝났으면 그 글자 뒤에.
+      // 조합 중에는 가로채지 않는다. 언제 끝날지 모르는데 붙잡아 두면 한참 뒤에 ^C 가 튀어나간다.
+      if (!composing && (action === null || passThrough)) {
+        const stray = imeStrayControl(e);
+        if (stray) {
+          e.preventDefault();
+          e.stopPropagation();
+          afterComposition(() => term.input(stray));
+          return false;
+        }
+      }
+
       // 한글 조합 중에는 클립보드·줄바꿈 말고 아무것도 가로채지 않는다. 조합 중인 음절은 아직
       // PTY 로 가지 않았을 수 있어, 다른 키를 앞질러 보내면 입력 순서가 뒤집힌다. 복사·붙여넣기는
       // 조합에 섞이는 조합이 아니고, 클립보드 읽기가 비동기라 사실상 조합이 먼저 끝난다.
@@ -307,10 +331,8 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
       if (!safeWhileComposing && (e.isComposing || e.keyCode === 229)) return true;
 
       if (action) {
-        // 선택이 없으면 Ctrl+C 는 예전처럼 셸로 가 실행 중인 명령을 끊는다.
         // (Ctrl+V 는 대체 화면에서도 붙여넣기다 — claude·codex 가 거기서 돌기 때문이다.
         //  vim 의 비주얼 블록은 vim 이 안내하는 대로 Ctrl+Q 를 쓴다.)
-        const passThrough = action === 'copy-if-selection' && term.getSelection().trim() === '';
         if (!passThrough) {
           // xterm 의 ^C/^V 전송과 웹뷰 기본 붙여넣기(중복!)를 함께 막는다.
           e.preventDefault();
@@ -336,7 +358,8 @@ export function TerminalPane({ pane, sessionId }: { pane: Pane; sessionId: strin
     });
 
     // 키 입력 → PTY. (ConPTY 의 커서 위치 질의도 xterm 이 여기로 답한다.)
-    const dataSub = term.onData((d) => void writePty(pane.id, d).catch(() => {}));
+    // ConPTY 파서를 열어 둔 채 끝나는 입력(Esc 등)만 win32 레코드로 바꾼다 (`lib/win32Input.ts`).
+    const dataSub = term.onData((d) => void writePty(pane.id, inputSequence(pane.id, d)).catch(() => {}));
     const binarySub = term.onBinary((d) => void writePty(pane.id, d).catch(() => {}));
 
     // 셸이 OSC 0/2 로 알려 주는 제목을 창 머리글에 그대로 싣는다 — 지금 무엇이 도는지가 보인다.

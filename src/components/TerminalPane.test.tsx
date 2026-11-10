@@ -46,7 +46,7 @@ import { MIN_THUMB_PX } from '../lib/scrollbar';
 import { WHEEL_CAP_PER_FRAME } from '../lib/termWheel';
 import { terminalClipboard } from '../lib/terminalRegistry';
 import { useStore } from '../state/store';
-import { WIN32_NEWLINE, resetWin32InputModes } from '../lib/win32Input';
+import { WIN32_ESCAPE, WIN32_NEWLINE, resetWin32InputModes } from '../lib/win32Input';
 import type { Pane } from '../state/types';
 
 const readMock = vi.mocked(readText);
@@ -371,6 +371,95 @@ describe('win32-input-mode', () => {
     expect(term.csiHandlers.length).toBe(2);
     view.unmount();
     expect(term.csiHandlers.length).toBe(0);
+  });
+
+  it('Esc 는 진짜 키 이벤트로 보낸다 — 줄바꿈을 한 번 보낸 뒤로 ConPTY 는 맨 ESC 를 붙잡아 둔다', async () => {
+    const { term } = mount();
+    askForWin32(term);
+    act(() => term.emitData('\x1b'));
+    await waitFor(() =>
+      expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: WIN32_ESCAPE }),
+    );
+  });
+
+  it('닫힌 채 끝나는 입력은 그대로 — 방향키·Alt+글자·Ctrl+C', () => {
+    const { term } = mount();
+    askForWin32(term);
+    for (const d of ['\x1b[A', '\x1bb', '\x03', 'ls']) {
+      act(() => term.emitData(d));
+      expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: d });
+    }
+  });
+
+  it('ConPTY 가 청하지 않았으면 Esc 도 예전처럼 한 바이트', () => {
+    const { term } = mount();
+    act(() => term.emitData('\x1b'));
+    expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: '\x1b' });
+  });
+});
+
+describe('한글 입력 상태의 Ctrl+C · Esc', () => {
+  /** 크로미움이 한글 입력 상태에서 주는 모양 — 글자 대신 `Process`, keyCode 229. */
+  const imeCtrlC = { key: 'Process', code: 'KeyC', keyCode: 229, ctrlKey: true } as const;
+  const imeEsc = { key: 'Process', code: 'Escape', keyCode: 229 } as const;
+
+  function writeLog() {
+    const from = backend.allArgs('pty_write').length;
+    return () => backend.allArgs('pty_write').slice(from).map((a) => a.data);
+  }
+
+  it('선택이 없으면 ^C 를 대신 보낸다 — xterm 은 229 인 키를 IME 의 것으로 보고 버린다', () => {
+    const { term, press } = mount();
+    const writes = writeLog();
+    expect(press(imeCtrlC)).toBe(false);
+    expect(term.inputs).toEqual(['\x03']);
+    expect(writes()).toEqual(['\x03']);
+  });
+
+  it('선택이 있으면 지금처럼 복사한다', async () => {
+    const { term, press } = mount();
+    term.selection = 'http://localhost:1420/';
+    expect(press(imeCtrlC)).toBe(false);
+    await waitFor(() => expect(writeMock).toHaveBeenCalledWith('http://localhost:1420/'));
+    expect(term.inputs).toEqual([]);
+  });
+
+  it('Esc 도 대신 보낸다 — ConPTY 가 청했으면 진짜 키 이벤트로', async () => {
+    const { term, press } = mount();
+    term.emitCsi('?', 'h', [9001]);
+    expect(press(imeEsc)).toBe(false);
+    await waitFor(() =>
+      expect(backend.lastArgs('pty_write')).toEqual({ paneId: 'p-term', data: WIN32_ESCAPE }),
+    );
+  });
+
+  it('조합 중에는 가로채지 않는다 — IME 가 그 키로 음절을 마무리한다', () => {
+    const { term, press } = mount();
+    const writes = writeLog();
+    fireEvent.compositionStart(term.textarea);
+    expect(press(imeCtrlC)).toBe(true);
+    expect(press(imeEsc)).toBe(true);
+    expect(term.inputs).toEqual([]);
+    expect(writes()).toEqual([]);
+  });
+
+  it('조합이 막 끝났으면 그 글자가 먼저, ^C 가 뒤에 간다', async () => {
+    const { term, press } = mount();
+    const writes = writeLog();
+    fireEvent.compositionStart(term.textarea);
+    fireEvent.compositionEnd(term.textarea);
+    expect(press(imeCtrlC)).toBe(false);
+    expect(writes()).toEqual([]);
+
+    act(() => term.emitData('가'));
+    await waitFor(() => expect(writes()).toEqual(['가', '\x03']));
+  });
+
+  it('IME 가 손대지 않은 Ctrl+C·Esc 는 예전처럼 xterm 이 보낸다', () => {
+    const { term, press } = mount();
+    expect(press({ key: 'c', code: 'KeyC', keyCode: 67, ctrlKey: true })).toBe(true);
+    expect(press({ key: 'Escape', code: 'Escape', keyCode: 27 })).toBe(true);
+    expect(term.inputs).toEqual([]);
   });
 });
 

@@ -52,16 +52,37 @@
  *
  * 그래서 어느 길로 가든 "줄바꿈" 이고, 어디에서도 제출로 바뀌지 않는다. 모드를 청하지 않은
  * 상대에게는(윈도우가 아닌 개발 환경 등) 예전 그대로 LF 한 바이트만 보낸다.
+ *
+ * ## Esc 도 레코드로 보내야 하는 까닭
+ *
+ * ConPTY 의 입력 파서는 읽은 덩어리가 **ESC 로 끝나면** 그것이 Esc 키인지, 잘려서 도착한 시퀀스의
+ * 앞머리인지 알 수 없다. 그래서 하나를 짐작으로 고른다(`stateMachine.cpp` 의 `ProcessString` 끝):
+ * win32 시퀀스를 **한 번도 받은 적이 없으면** Esc 키로 보고, **한 번이라도 받았으면** 잘린 시퀀스로 보고
+ * 다음 바이트가 올 때까지 붙잡아 둔다(`_encounteredWin32InputModeSequence`). 이 모드를 쓰는 터미널은
+ * 모든 키를 레코드로 보내므로 맨 ESC 가 올 리 없다는 가정이다.
+ *
+ * 우리는 줄바꿈만 레코드로 보내므로 그 가정이 틀린다. Shift+Enter 를 **한 번 누른 뒤로는** Esc 가
+ * 나가지 않는다 — 다시 눌러도 앞의 것을 버리고 또 붙잡는다. 다음에 누른 키에는 Alt 가 붙는다.
+ * Ctrl+C 라면 Ctrl+Alt+C 가 되어 ConPTY 의 Ctrl+C 처리(`CTRL_C_EVENT`)를 비켜 간다.
+ *
+ * 그래서 파서를 **열어 둔 채로 끝나는** 입력만 골라 레코드로 바꾼다(`inputSequence`). 그 밖의
+ * 입력(방향키 `ESC[A`, Alt+글자 `ESC b`, 붙여넣기, 터미널 응답)은 시퀀스가 닫힌 채로 끝나므로 그대로 둔다.
  */
 
 /** ConPTY 가 켜 달라고 청하는 사설 모드 번호 (`CSI ? 9001 h` / `l`). */
 export const WIN32_INPUT_MODE = 9001;
 
 /** `dwControlKeyState` 비트 (winuser.h). */
+export const LEFT_ALT_PRESSED = 0x0002;
 export const LEFT_CTRL_PRESSED = 0x0008;
+export const SHIFT_PRESSED = 0x0010;
 
 /** `wVirtualKeyCode` — 지금 쓰는 것만. */
 export const VK_J = 0x4a;
+export const VK_ESCAPE = 0x1b;
+
+/** `Esc` 의 스캔 코드. */
+export const SC_ESCAPE = 0x01;
 
 /**
  * `J` 의 스캔 코드.
@@ -113,8 +134,47 @@ const CTRL_J: Omit<Win32Key, 'down'> = {
  * (`terminalInput.cpp` 의 `if (!key.keyDown)`), codex 는 `KeyEventKind::Release` 를 거르고,
  * libuv 는 뗌을 아예 무시한다(`uv_tty_read`).
  */
-export const WIN32_NEWLINE =
-  win32KeySequence({ ...CTRL_J, down: true }) + win32KeySequence({ ...CTRL_J, down: false });
+export const WIN32_NEWLINE = pressAndRelease(CTRL_J);
+
+/** 눌림과 뗌 한 쌍 — 이유는 `WIN32_NEWLINE` 에 적었다. */
+function pressAndRelease(k: Omit<Win32Key, 'down'>): string {
+  return win32KeySequence({ ...k, down: true }) + win32KeySequence({ ...k, down: false });
+}
+
+const ESCAPE: Omit<Win32Key, 'down'> = { vk: VK_ESCAPE, sc: SC_ESCAPE, ch: 0x1b, mods: 0 };
+
+/** Alt(+Shift)+글자 키. `ch` 는 그 키가 실제로 만드는 글자다. */
+function altKey(vk: number, sc: number, ch: string, shift: boolean): Omit<Win32Key, 'down'> {
+  return {
+    vk,
+    sc,
+    ch: ch.charCodeAt(0),
+    mods: LEFT_ALT_PRESSED | (shift ? SHIFT_PRESSED : 0),
+  };
+}
+
+/**
+ * ConPTY 파서를 **열어 둔 채로** 끝나는 xterm 출력 → 같은 키의 레코드.
+ *
+ * xterm 5.5 가 키 하나로 내보내는 것 가운데 ESC 로 끝나거나(`Esc`·`Ctrl+[`·`Ctrl+3`), ESC 뒤 한 글자가
+ * 새 시퀀스의 문을 여는 것(`[` CSI · `]` OSC · `O` SS3 · `P` DCS · `X` `^` `_` 문자열)만 골랐다. 나머지
+ * `ESC <글자>` 는 ConPTY 가 그 자리에서 Alt+글자로 닫는다(`_ActionEscDispatch`). Alt 조합의 가상 키는
+ * xterm 이 그 바이트를 고르는 기준(`Keyboard.ts` 의 `KEYCODE_KEY_MAPPINGS`, US 배열)과 같게 맞췄다.
+ */
+const OPEN_ENDED: Record<string, Omit<Win32Key, 'down'>> = {
+  '\x1b': ESCAPE,
+  '\x1b\x1b': { ...ESCAPE, mods: LEFT_ALT_PRESSED },
+  '\x1b[': altKey(0xdb, 0x1a, '[', false),
+  '\x1b]': altKey(0xdd, 0x1b, ']', false),
+  '\x1bO': altKey(0x4f, 0x18, 'O', true),
+  '\x1bP': altKey(0x50, 0x19, 'P', true),
+  '\x1bX': altKey(0x58, 0x2d, 'X', true),
+  '\x1b^': altKey(0x36, 0x07, '^', true),
+  '\x1b_': altKey(0xbd, 0x0c, '_', true),
+};
+
+/** `Esc` 를 눌렀다 뗀 것. */
+export const WIN32_ESCAPE = pressAndRelease(ESCAPE);
 
 /** 예전부터 쓰던 줄바꿈 — 순수 LF(= Ctrl+J 가 보내는 바이트). */
 export const PLAIN_NEWLINE = '\n';
@@ -140,6 +200,19 @@ export function win32InputMode(paneId: string): boolean {
 /** 이 창에 보낼 줄바꿈 바이트. */
 export function newlineSequence(paneId: string): string {
   return win32InputMode(paneId) ? WIN32_NEWLINE : PLAIN_NEWLINE;
+}
+
+/**
+ * xterm 이 내보낸 입력을 이 창의 PTY 에 보낼 바이트로.
+ *
+ * 모드가 켜져 있고 ConPTY 파서를 열어 둔 채 끝나는 입력이면 같은 키의 레코드로 바꾸고, 그 밖에는
+ * **그대로** 둔다. 통째로 일치할 때만 바꾸므로 붙여넣기나 터미널 응답이 걸릴 일은 없다.
+ * 바이트를 읽는 클라이언트(wsl·ssh·claude)에게는 conhost 가 레코드를 다시 같은 바이트로 펴서 준다.
+ */
+export function inputSequence(paneId: string, data: string): string {
+  if (!win32InputMode(paneId)) return data;
+  const key = OPEN_ENDED[data];
+  return key ? pressAndRelease(key) : data;
 }
 
 /** 테스트 전용 — 창 사이에 상태가 새지 않게 한다. */

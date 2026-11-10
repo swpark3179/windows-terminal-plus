@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { appOwnsKey, terminalKeyAction, type KeyLike } from './keys';
+import { appOwnsKey, imeStrayControl, terminalKeyAction, type ImeKeyLike, type KeyLike } from './keys';
 
 function key(over: Partial<KeyLike>): KeyLike {
   return { type: 'keydown', key: 'a', ctrlKey: false, shiftKey: false, altKey: false, ...over };
@@ -118,5 +118,55 @@ describe('appOwnsKey', () => {
     expect(appOwnsKey({ ctrlKey: true, shiftKey: true, key: 'F' } as KeyboardEvent)).toBe(true);
     // Shift 없는 Ctrl+F 는 readline 의 커서 이동이라 셸의 것이다.
     expect(appOwnsKey({ ctrlKey: true, shiftKey: false, key: 'f' } as KeyboardEvent)).toBe(false);
+  });
+});
+
+describe('imeStrayControl', () => {
+  /** 한글 입력 상태에서 크로미움이 주는 모양 — 글자 대신 `Process`, keyCode 229. */
+  function ime(over: Partial<ImeKeyLike>): ImeKeyLike {
+    return {
+      type: 'keydown',
+      key: 'Process',
+      keyCode: 229,
+      isComposing: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      ...over,
+    };
+  }
+
+  it('IME 가 표시만 붙인 Ctrl+C 는 ^C 다 — xterm 이 버리면 npm run 이 멈추지 않는다', () => {
+    expect(imeStrayControl(ime({ code: 'KeyC', ctrlKey: true }))).toBe('\x03');
+  });
+
+  it('IME 가 표시만 붙인 Esc 는 ESC 다 — claude 의 대화 창을 닫는 키', () => {
+    expect(imeStrayControl(ime({ code: 'Escape' }))).toBe('\x1b');
+    // key 만 Process 이고 keyCode 가 따로 와도 같다.
+    expect(imeStrayControl(ime({ code: 'Escape', keyCode: 0 }))).toBe('\x1b');
+  });
+
+  it('조합 중이면 정말로 IME 의 키다', () => {
+    expect(imeStrayControl(ime({ code: 'KeyC', ctrlKey: true, isComposing: true }))).toBeNull();
+    expect(imeStrayControl(ime({ code: 'Escape', isComposing: true }))).toBeNull();
+  });
+
+  it('IME 가 손대지 않은 키는 xterm 이 알아서 보낸다', () => {
+    expect(imeStrayControl(ime({ key: 'c', keyCode: 67, code: 'KeyC', ctrlKey: true }))).toBeNull();
+    expect(imeStrayControl(ime({ key: 'Escape', keyCode: 27, code: 'Escape' }))).toBeNull();
+  });
+
+  it('다른 조합과 글자 키는 건드리지 않는다', () => {
+    // Ctrl+Shift+C 는 복사, AltGr(Ctrl+Alt) 는 그 자판의 글자다.
+    expect(imeStrayControl(ime({ code: 'KeyC', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(imeStrayControl(ime({ code: 'KeyC', ctrlKey: true, altKey: true }))).toBeNull();
+    // Ctrl 없는 C 는 한글 자모다 — 조합의 몫이다.
+    expect(imeStrayControl(ime({ code: 'KeyC' }))).toBeNull();
+    expect(imeStrayControl(ime({ code: 'Escape', ctrlKey: true }))).toBeNull();
+    expect(imeStrayControl(ime({ code: 'KeyV', ctrlKey: true }))).toBeNull();
+  });
+
+  it('keydown 이 아니면 아무것도 하지 않는다', () => {
+    expect(imeStrayControl(ime({ type: 'keyup', code: 'KeyC', ctrlKey: true }))).toBeNull();
   });
 });
