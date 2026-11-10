@@ -80,6 +80,29 @@ function keyName(e: KeyLike): string {
   }
 }
 
+/** IME 가 손댄 키인지 보려면 `keyCode`·`isComposing` 까지 필요하다. */
+export type ImeKeyLike = KeyLike & Partial<Pick<KeyboardEvent, 'keyCode' | 'isComposing'>>;
+
+/**
+ * IME 가 "내가 처리했다"(`keyCode` 229)는 표시만 붙여 넘긴 **제어 키** — 그 키가 원래 보냈을 바이트.
+ *
+ * 한글 입력 상태에서는 크로미움이 조합과 상관없는 키에도 `'Process'`·229 를 붙여 주는 일이 있다
+ * (`keyName` 이 물리 키로 되짚는 그 자리). xterm 5.5 는 229 인 키를 IME 의 것으로 보고, 텍스트 칸에 새로
+ * 들어온 글자가 없으면 **아무것도 보내지 않는다**(`CompositionHelper.keydown`). 글자 키라면 그 글자가 칸에
+ * 들어오니 괜찮지만, `Ctrl+C`·`Esc` 는 글자를 남기지 않아 통째로 사라진다 — `npm run` 이 멈추지 않고
+ * `claude` 의 대화 창이 닫히지 않는다.
+ *
+ * 조합 중(`isComposing`)이면 정말로 IME 의 키이므로 건드리지 않는다. 조합이 끝났는지는 호출부가 자기
+ * 기록(`compositionstart`~`end`)으로 한 번 더 본다.
+ */
+export function imeStrayControl(e: ImeKeyLike): string | null {
+  if (e.type !== 'keydown' || e.altKey || e.isComposing) return null;
+  if (e.keyCode !== 229 && e.key !== 'Process') return null;
+  if (e.code === 'KeyC' && e.ctrlKey && !e.shiftKey) return '\x03';
+  if (e.code === 'Escape' && !e.ctrlKey && !e.shiftKey) return '\x1b';
+  return null;
+}
+
 export function terminalKeyAction(e: KeyLike): TerminalKeyAction {
   // 같은 처리기가 keypress·keyup 에도 불린다. 걸러 내지 않으면 한 번 누를 때 두 번 붙는다.
   if (e.type !== 'keydown') return null;

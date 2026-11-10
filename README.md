@@ -32,7 +32,7 @@ src/                          React + TypeScript — 렌더와 입력만 담당
   lib/scrollbar.ts            터미널 스크롤 막대 기하 (최소 손잡이 크기 · 가상 뷰포트) ← 순수, 테스트 대상
   lib/termWheel.ts            대체 화면에서 막대가 프로그램에 보내는 휠 (칸 ↔ 이벤트 변환)
   lib/terminalRegistry.ts     창 id → 그 창의 복사·붙여넣기 손잡이
-  lib/win32Input.ts           win32-input-mode — Shift+Enter 를 진짜 키 이벤트로   ← 순수, 테스트 대상
+  lib/win32Input.ts           win32-input-mode — Shift+Enter · Esc 를 진짜 키 이벤트로 ← 순수, 테스트 대상
   lib/termTheme.ts            터미널 배색 + 대비 계산 (규칙을 테스트가 지킨다)      ← 순수, 테스트 대상
   lib/termText.ts             터미널이 준 제목·주소를 UI 에 옮길 때의 다듬기        ← 순수, 테스트 대상
   lib/termLinks.ts            하이퍼링크 — Ctrl+클릭 · 실제 주소 칩
@@ -573,6 +573,9 @@ WSL 의 폴더 복원은 `wsl.exe --cd` 로 동작하고, SSH 는 폴더도 복�
 
 - **`Ctrl+C`** — 선택한 영역이 있으면 복사하고 선택을 지운다. 없으면 예전 그대로 `^C` 가 셸로 가
   실행 중인 명령을 끊는다. 복사 뒤 선택이 지워지므로 한 번 더 누르면 언제나 인터럽트다.
+  **한글 입력 상태에서도** 그렇다 — 크로미움은 그때 `Ctrl+C` 에 IME 표시(`keyCode` 229)를 붙여 주기도
+  하는데, xterm 은 그런 키를 IME 의 것으로 보고 `^C` 를 보내지 않고 버린다(`CompositionHelper.keydown`).
+  조합 중이 아니면 우리가 같은 바이트를 대신 보낸다(`lib/keys.ts` 의 `imeStrayControl`). `Esc` 도 같다.
 - **`Ctrl+V`** — 붙여넣기. **어디서나** 그렇다(윈도우 터미널과 같다). 한때는 `vim` 의 비주얼
   블록을 살리려고 대체 화면에서만 그 프로그램에 넘겼는데, 요즘 `claude` 가 바로 그 대체 화면에
   UI 를 그려서 정작 붙여넣기가 가장 필요한 자리에서만 안 되는 꼴이 됐다. 가려지는 두 자리에는
@@ -665,6 +668,41 @@ Claude Code 공식 `/terminal-setup` 이 쓰는 `ESC+CR`(메타+엔터) 관례�
 줄바꿈은 붙여넣기처럼 스크롤을 바닥으로 돌려놓는다 — 스크롤을 올려 둔 채 줄을 넣으면 xterm 이
 원래 하는 자동 스크롤을 우리가 가로채는 키 처리기가 건너뛰기 때문에, 우리가 대신 해 준다.
 
+### Esc 와 몇몇 Alt 조합도 레코드로 보낸다
+
+ConPTY 의 입력 파서는 읽은 덩어리가 **ESC 로 끝나면** 그것이 `Esc` 키인지, 잘려서 도착한 시퀀스의
+앞머리인지 알 수 없다. 그래서 짐작으로 고른다(`stateMachine.cpp` 의 `ProcessString` 끝): win32
+시퀀스를 **한 번도 받은 적이 없으면** `Esc` 로, **한 번이라도 받았으면** 잘린 시퀀스로 보고 다음
+바이트가 올 때까지 붙잡아 둔다(`_encounteredWin32InputModeSequence`). 이 모드를 쓰는 터미널은 모든
+키를 레코드로 보내니 맨 ESC 가 올 리 없다는 가정이다.
+
+줄바꿈만 레코드로 보내면 그 가정이 틀린다. 그 창에서 `Shift+Enter` 를 **한 번 누른 뒤로는**:
+
+- `Esc` 가 나가지 않는다. 다시 눌러도 앞의 것을 버리고 또 붙잡는다 — `claude` 의 `/usage` 처럼
+  `Esc` 로만 닫히는 화면이 닫히지 않던 자리다.
+- 그다음에 누른 키에 Alt 가 붙는다. `Ctrl+C` 라면 `Ctrl+Alt+C` 가 되어
+  (`ActionExecuteFromEscape` → `_DoControlCharacter(ETX, writeAlt=true)`) ConPTY 의 Ctrl+C 처리를
+  비켜 간다 — `npm run` 이 첫 `Ctrl+C` 에 멈추지 않던 자리다.
+
+그래서 **파서를 열어 둔 채 끝나는 입력만** 골라 같은 키의 레코드(눌림·뗌)로 바꾼다(`inputSequence`).
+통째로 일치할 때만 바꾸므로 붙여넣기·터미널 응답은 걸리지 않고, 방향키(`ESC[A`)·Alt+글자(`ESC b`)
+처럼 닫힌 채 끝나는 입력은 한 바이트도 바뀌지 않는다.
+
+| xterm 이 내보낸 것 | 키 | 레코드 (`Vk;Sc;Uc;…;Cs`) |
+| --- | --- | --- |
+| `ESC` | `Esc` (`Ctrl+[` · `Ctrl+3` 도 같은 바이트) | `27;1;27;…;0` |
+| `ESC ESC` | `Alt+Esc` | `27;1;27;…;ALT` |
+| `ESC [` · `ESC ]` | `Alt+[` · `Alt+]` | `VK_OEM_4` · `VK_OEM_6` + ALT |
+| `ESC O` · `ESC P` · `ESC X` | `Alt+Shift+O/P/X` | 그 글자 키 + ALT·SHIFT |
+| `ESC ^` · `ESC _` | `Alt+Shift+6` · `Alt+Shift+-` | 그 글자 키 + ALT·SHIFT |
+
+Alt 조합까지 넣는 것은 `Esc` 만 바꾸면 ConPTY 의 짐작이 "첫 `Shift+Enter`" 가 아니라 "첫 `Esc`" 에서
+뒤집혀, bash 의 `M-_` 같은 키가 지금보다 일찍 막히기 때문이다. 받는 쪽에서 보면 바뀌는 것이 없다 —
+바이트를 읽는 쪽(`wsl`·`ssh`·`claude`)에게는 conhost 가 레코드를 예전과 같은 `ESC`·`ESC [` 로 펴서
+주고, 레코드를 읽는 쪽(`codex`·PSReadLine)은 진짜 `Esc`·`Alt+[` 를 받는다. 뗌은 줄바꿈과 같은 이유로
+함께 보내고, 어디에서도 글자를 만들지 않는다. `^C` 는 바꾸지 않는다 — 맨 `0x03` 이 ConPTY 의 Ctrl+C
+전용 길을 탄다.
+
 ### 한글을 치던 중에 눌러도 순서가 지켜진다
 
 조합 중인 음절은 xterm 이 `compositionend` 자리에서 곧바로 보내지 않고 **한 틱 뒤에** 보낸다
@@ -680,7 +718,9 @@ Claude Code 공식 `/terminal-setup` 이 쓰는 `ESC+CR`(메타+엔터) 관례�
 키 이벤트의 `isComposing` 만 보는 것으로는 모자라다. 크로미움은 IME 가 음절을 확정하며 넘긴
 `Enter` 를 `compositionend` **뒤에** 주기도 하는데(그때 `isComposing` 은 이미 거짓이다), 그 순간에도
 글자는 여전히 위의 `setTimeout` 안에 남아 있다. 그래서 "조합이 끝나기를 기다리는 중" 까지를
-줄바꿈을 미룰 자리로 본다.
+줄바꿈을 미룰 자리로 본다. 한글 입력 상태에서 대신 보내는 `Ctrl+C`·`Esc`(위 클립보드 절)도 같은
+틈이면 그 글자 뒤로 간다. 조합 **중**에 누른 것은 IME 에 맡긴다 — 언제 끝날지 모르는데 붙잡아 두면
+한참 뒤에 `^C` 가 튀어나간다.
 
 ### 하이퍼링크
 
@@ -712,7 +752,7 @@ UNC 경로는 NTLM 을 흘린다). 셸을 거치지 않는 것도 의도다 — 
 
 ```bash
 cd src-tauri && cargo test --workspace   # 159개 — 레이아웃 대수 · 스냅샷 · PTY · VT 코어(재연결 직렬화) · OSC 스캐너 · 셸 통합 · AI 감지 · 링크/폴더 검사 · 나눈 칸의 폴더 · 새 파일 이름
-pnpm test                                # 400개 — 마크다운 렌더러/목차/찾기/링크 · 새 파일 · IME · 편집 기록 · 이미지 · 병합/크기 드래그 · 클립보드 · 줄바꿈(한글 조합 포함) · 스크롤 막대 · 복원 직후 스크롤 · 배색 대비 · 하이퍼링크 · 탐색기로 열기 · 모션
+pnpm test                                # 420개 — 마크다운 렌더러/목차/찾기/링크 · 새 파일 · IME · 편집 기록 · 이미지 · 병합/크기 드래그 · 클립보드 · 줄바꿈(한글 조합 포함) · Esc/Alt 레코드 · 한글 상태 Ctrl+C · 스크롤 막대 · 복원 직후 스크롤 · 배색 대비 · 하이퍼링크 · 탐색기로 열기 · 모션
 ```
 
 `src-tauri/tests/terminal_pipeline.rs` 는 실제 ConPTY 를 띄워

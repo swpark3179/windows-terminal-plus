@@ -68,6 +68,8 @@ export class StubTerminal {
   selectedAll = 0;
   /** `clear()` 가 불린 횟수. */
   clearedBuffer = 0;
+  /** `input()` 으로 앱이 대신 쳐 넣은 것들. */
+  inputs: string[] = [];
   keyHandler: ((e: KeyboardEvent) => boolean) | null = null;
 
   /** 등록된 CSI 처리기 — 테스트가 시퀀스 도착을 흉내 낼 수 있게 붙잡아 둔다. */
@@ -132,6 +134,12 @@ export class StubTerminal {
 
   paste(data: string) {
     this.pasted.push(data);
+  }
+
+  /** 실제 xterm 처럼 타이핑과 같은 길로 흘린다 — `onData` 가 난다. */
+  input(data: string) {
+    this.inputs.push(data);
+    this._data.fire(data);
   }
 
   scrollToBottom() {
